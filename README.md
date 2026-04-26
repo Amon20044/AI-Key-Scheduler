@@ -12,6 +12,71 @@ Use it when your app has multiple API keys across AI providers and models, and y
 >
 > By default, state is memory-only. Optional file persistence stores only non-secret scheduling metadata such as key IDs, provider/model names, `lastUsedAt`, and `resetAt`. Never log `secret.value()`, and load real keys from environment variables or your own secret manager.
 
+## Prompt For AI Assistants
+
+Copy this into ChatGPT, Cursor, Claude, Copilot, or any coding agent when you want it to add AI Key Manager to your app:
+
+```text
+Use the npm package `ai-key-manager` to add rate-limit aware API key scheduling to this Node.js/TypeScript app.
+
+Package:
+- npm: ai-key-manager
+- install: npm install ai-key-manager
+- GitHub: https://github.com/Amon20044/AI-Key-Scheduler
+
+What it does:
+- Manages multiple AI providers, models, and API keys.
+- Groups keys by provider + model.
+- Selects the least recently used available key.
+- Moves rate-limited keys into cooldown.
+- Uses Retry-After when available; otherwise uses the provider default cooldown.
+- Persists only non-secret scheduling state if FileStateAdapter is used.
+- Keeps raw API keys local and wrapped in SecretString.
+- Makes no telemetry or external network calls by itself.
+
+How to use it:
+1. Import `KeyScheduler`, `FileStateAdapter` or `MemoryStateAdapter`, and `isRateLimitError` from `ai-key-manager`.
+2. Configure providers with stable key IDs and API key values from environment variables.
+3. Before calling the AI SDK, call:
+   `const lease = await scheduler.acquire({ provider, model })`
+4. Pass the real key to the provider SDK using:
+   `lease.key.secret.value()`
+5. If the provider request succeeds, call:
+   `await lease.success()`
+6. If the provider returns a rate-limit error, call:
+   `await lease.rateLimited({ retryAfter })`
+7. For any other error, call:
+   `await lease.release()`
+
+Security rules:
+- Never log `lease.key.secret.value()`.
+- Never hardcode API keys in source code.
+- Load keys from env vars or a secret manager.
+- Do not persist raw API key values.
+- Do not send keys, prompts, responses, headers, or metadata to any service except the provider SDK call the user explicitly requested.
+
+Minimal pattern:
+
+const lease = await scheduler.acquire({ provider: "openrouter", model });
+
+try {
+  const result = await callProvider({
+    apiKey: lease.key.secret.value(),
+    model,
+    prompt
+  });
+  await lease.success();
+  return result;
+} catch (error) {
+  if (isRateLimitError(error)) {
+    await lease.rateLimited({ retryAfter: getRetryAfter(error) });
+  } else {
+    await lease.release();
+  }
+  throw error;
+}
+```
+
 ## What It Does
 
 - Rotates keys per `provider + model`.
