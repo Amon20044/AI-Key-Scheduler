@@ -223,6 +223,105 @@ describe("withKeyRetry", () => {
     });
   });
 
+  it("uses next provider immediately for the exact stream UPSTREAM_ERROR payload", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    const calls: string[] = [];
+    const result = await scheduler.withStreamRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      execute: async ({ provider, model }) => {
+        calls.push(`${provider}:${model}`);
+        if (provider === "google") {
+          throw new Error(
+            'event: error\\ndata: {"success":false,"message":"Stream failed","data":null,"error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods., Status: NOT_FOUND, Details: []"}}'
+          );
+        }
+
+        return { provider, model };
+      }
+    });
+
+    expect(result).toEqual({
+      provider: "openrouter",
+      model: "google/gemini-flash-1.5"
+    });
+    expect(calls).toEqual(["google:gemini-3.0-flash", "openrouter:google/gemini-flash-1.5"]);
+  });
+
+  it("progresses across three providers: route error, then exhausted keys, then success", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        },
+        {
+          name: "vercel-ai-gateway",
+          model: "anthropic/claude-sonnet-4.6",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "gateway-a", value: "sk-gateway-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    const calls: string[] = [];
+    const result = await scheduler.withRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      execute: async ({ provider, model }) => {
+        calls.push(`${provider}:${model}`);
+
+        if (provider === "google") {
+          throw new Error(
+            'event: error\\ndata: {"success":false,"message":"Stream failed","data":null,"error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods., Status: NOT_FOUND, Details: []"}}'
+          );
+        }
+
+        if (provider === "openrouter") {
+          throw new Error("429 exhausted key on fallback provider");
+        }
+
+        return { provider, model };
+      }
+    });
+
+    expect(result).toEqual({
+      provider: "vercel-ai-gateway",
+      model: "anthropic/claude-sonnet-4.6"
+    });
+    expect(calls).toEqual([
+      "google:gemini-3.0-flash",
+      "openrouter:google/gemini-flash-1.5",
+      "vercel-ai-gateway:anthropic/claude-sonnet-4.6"
+    ]);
+  });
+
   it("can disable provider/model fallback for route errors", async () => {
     const scheduler = new KeyScheduler({
       providers: [
