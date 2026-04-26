@@ -7,6 +7,7 @@ import {
   KeyScheduler,
   MemoryStateAdapter,
   NoAvailableKeyError,
+  ProviderNotFoundError,
   RateLimitError,
   isRateLimitError,
   parseRetryAfter
@@ -185,9 +186,9 @@ describe("KeyScheduler", () => {
     const google = await scheduler.acquire({ provider: "google", model: "model-b" });
 
     expect(openrouter.provider).toBe("openrouter");
-    expect(openrouter.key.value).toBe("a");
+    expect(openrouter.key.secret.value()).toBe("a");
     expect(google.provider).toBe("google");
-    expect(google.key.value).toBe("b");
+    expect(google.key.secret.value()).toBe("b");
   });
 
   it("serializes concurrent acquires inside one process", async () => {
@@ -229,9 +230,7 @@ describe("KeyScheduler", () => {
   it("throws a clear configuration error when no group exists", async () => {
     const scheduler = new KeyScheduler({ providers: [provider()] });
 
-    await expect(scheduler.acquire({ provider: "missing", model: "test-model" })).rejects.toThrow(
-      'No keys configured for provider "missing" and model "test-model".'
-    );
+    await expect(scheduler.acquire({ provider: "missing", model: "test-model" })).rejects.toBeInstanceOf(ProviderNotFoundError);
   });
 
   it("rejects duplicate provider/model groups", () => {

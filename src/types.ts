@@ -1,6 +1,20 @@
+import type { SecretString } from "./secret.js";
+
 export interface KeyConfig {
   id: string;
-  value?: string;
+  value?: string | SecretString;
+  secret?: SecretString;
+  metadata?: Record<string, unknown>;
+}
+
+export interface APIKey {
+  id: string;
+  provider: string;
+  model: string;
+  secret: SecretString;
+  lastUsedAt?: Date;
+  exhausted: boolean;
+  resetAt?: Date;
   metadata?: Record<string, unknown>;
 }
 
@@ -28,7 +42,7 @@ export interface RateLimitedOptions {
 }
 
 export interface KeyLease {
-  key: KeyConfig;
+  key: APIKey;
   provider: string;
   model: string;
   success(): Promise<void>;
@@ -53,4 +67,9 @@ export interface PersistedSchedulerState {
 export interface StateAdapter {
   load(): Promise<PersistedSchedulerState | undefined>;
   save(state: PersistedSchedulerState): Promise<void>;
+}
+
+export interface KeyStorage {
+  load(): Promise<APIKey[]>;
+  save(keys: APIKey[]): Promise<void>;
 }

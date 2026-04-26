@@ -11,7 +11,8 @@ Use it when your app has multiple API keys across AI providers and models, and y
 - Avoids keys that recently hit rate limits.
 - Uses `Retry-After` when the provider returns it.
 - Persists only non-secret state: key IDs, provider/model names, `lastUsedAt`, and `resetAt`.
-- Keeps real API key values in memory only.
+- Keeps real API key values in memory only and wraps them in `SecretString`.
+- Redacts secrets from `console.log`, `String()`, `JSON.stringify()`, and `util.inspect`.
 - Works with any SDK where you can pass an API key per request or per client.
 
 ## Install
@@ -77,7 +78,7 @@ const lease = await scheduler.acquire({
 });
 
 try {
-  const result = await callProvider(lease.key.value);
+  const result = await callProvider(lease.key.secret.value());
   await lease.success();
   return result;
 } catch (error) {
@@ -144,7 +145,7 @@ const scheduler = new KeyScheduler({
 Each key needs:
 
 - `id`: stable public identifier used for persisted scheduling state.
-- `value`: secret API key value used only at runtime.
+- `value`: secret API key value used only at runtime. The scheduler converts this to `SecretString`.
 - `metadata`: optional non-secret data you want persisted with the key.
 
 The IDs above are intentionally random-looking but non-secret. Keep real key values in environment variables or a secret manager.
@@ -164,7 +165,10 @@ Returns:
 {
   key: {
     id: "openrouter-k2m9",
-    value: "sk-..."
+    provider: "openrouter",
+    model: "openai/gpt-4o-mini",
+    secret: "[REDACTED]",
+    exhausted: false
   },
   provider: "openrouter",
   model: "openai/gpt-4o-mini",
@@ -182,6 +186,35 @@ Call exactly one lease method after the provider request:
 
 If all keys are cooling down, `acquire()` throws `NoAvailableKeyError` and includes `nextResetAt`.
 If no matching group exists, it throws `SchedulerConfigurationError`.
+
+Raw key access is intentionally explicit:
+
+```ts
+const rawKey = lease.key.secret.value();
+```
+
+Do not log `secret.value()`.
+
+## Security Model
+
+AI Key Manager is local-first. It does not send API keys, prompts, responses, metadata, analytics, or telemetry to any external server. Scheduler operations make zero outbound network calls.
+
+Enforced by the package:
+
+- Secrets are wrapped in `SecretString`.
+- `String(secret)`, `secret.toString()`, `secret.toJSON()`, `JSON.stringify(secret)`, `util.inspect(secret)`, and `console.log(secret)` return `[REDACTED]`.
+- Scheduler errors use safe fields like key ID, provider, model, and reset timestamps.
+- Default state is in memory. `FileStateAdapter` persists only non-secret scheduler state.
+- `sanitizeForLog()` recursively redacts API keys, tokens, authorization headers, prompts, responses, request bodies, and metadata.
+
+Developer responsibility:
+
+- Load keys from environment variables or your own secret manager.
+- Do not hardcode API keys in source code.
+- Do not log `lease.key.secret.value()`.
+- Only pass raw keys to the AI provider SDK call that needs them.
+
+See [SECURITY.md](./SECURITY.md) for the full security policy.
 
 ## How It Works
 
@@ -232,7 +265,7 @@ export async function askWithLangChain(prompt: string) {
 
   const llm = new ChatOpenAI({
     model,
-    apiKey: lease.key.value,
+    apiKey: lease.key.secret.value(),
     configuration: {
       baseURL: "https://openrouter.ai/api/v1"
     }
@@ -306,7 +339,7 @@ export async function askWithVercelAISDK(prompt: string) {
 
   const gateway = createOpenAICompatible({
     name: "vercel-ai-gateway",
-    apiKey: lease.key.value,
+    apiKey: lease.key.secret.value(),
     baseURL: "https://ai-gateway.vercel.sh/v1"
   });
 

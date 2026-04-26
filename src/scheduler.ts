@@ -1,9 +1,11 @@
 import { MemoryStateAdapter } from "./adapters/memory.js";
-import { NoAvailableKeyError, SchedulerConfigurationError } from "./errors.js";
+import { NoAvailableKeyError, ProviderNotFoundError, SchedulerConfigurationError } from "./errors.js";
 import { MinHeap } from "./heap.js";
 import { parseRetryAfter } from "./retryAfter.js";
+import { isSecretString, SecretString } from "./secret.js";
 import type {
   AcquireRequest,
+  APIKey,
   KeyConfig,
   KeyLease,
   PersistedKeyState,
@@ -15,7 +17,7 @@ import type {
 } from "./types.js";
 
 interface RuntimeKey {
-  config: KeyConfig;
+  apiKey: APIKey;
   provider: string;
   model: string;
   lastUsedAt: number;
@@ -24,7 +26,11 @@ interface RuntimeKey {
 }
 
 interface KeyGroup {
-  provider: ProviderConfig;
+  provider: {
+    name: string;
+    model: string;
+    defaultCooldownMs: number;
+  };
   keysById: Map<string, RuntimeKey>;
   availableIds: Set<string>;
   cooldowns: MinHeap;
@@ -66,7 +72,7 @@ export class KeyScheduler {
       }
 
       selected.leased = true;
-      group.availableIds.delete(selected.config.id);
+      group.availableIds.delete(selected.apiKey.id);
       return this.createLease(selected);
     });
   }
@@ -89,8 +95,9 @@ export class KeyScheduler {
           throw new SchedulerConfigurationError(`Duplicate key id "${key.id}" in "${provider.name}" / "${provider.model}".`);
         }
 
+        const apiKey = normalizeKeyConfig(key, provider.name, provider.model);
         keysById.set(key.id, {
-          config: key,
+          apiKey,
           provider: provider.name,
           model: provider.model,
           lastUsedAt: 0,
@@ -100,7 +107,11 @@ export class KeyScheduler {
       }
 
       this.groups.set(groupId, {
-        provider,
+        provider: {
+          name: provider.name,
+          model: provider.model,
+          defaultCooldownMs: provider.defaultCooldownMs
+        },
         keysById,
         availableIds,
         cooldowns: new MinHeap()
@@ -130,18 +141,23 @@ export class KeyScheduler {
       key.resetAt = keyState.resetAt;
       if (key.resetAt !== undefined) {
         if (key.resetAt > this.now()) {
-          group.availableIds.delete(key.config.id);
-          group.cooldowns.push({ keyId: key.config.id, resetAt: key.resetAt });
+          group.availableIds.delete(key.apiKey.id);
+          group.cooldowns.push({ keyId: key.apiKey.id, resetAt: key.resetAt });
         } else {
           key.resetAt = undefined;
         }
       }
+      syncApiKeyState(key);
     }
   }
 
   private getGroup(provider: string, model: string): KeyGroup {
     const group = this.groups.get(createGroupId(provider, model));
     if (!group || group.keysById.size === 0) {
+      const providerExists = [...this.groups.values()].some((candidate) => candidate.provider.name === provider);
+      if (!providerExists) {
+        throw new ProviderNotFoundError(`No provider configured for "${provider}".`, { provider, model });
+      }
       throw new SchedulerConfigurationError(`No keys configured for provider "${provider}" and model "${model}".`);
     }
     return group;
@@ -157,8 +173,9 @@ export class KeyScheduler {
       }
 
       key.resetAt = undefined;
+      syncApiKeyState(key);
       if (!key.leased) {
-        group.availableIds.add(key.config.id);
+        group.availableIds.add(key.apiKey.id);
       }
     }
   }
@@ -171,7 +188,7 @@ export class KeyScheduler {
         continue;
       }
 
-      if (!selected || key.lastUsedAt < selected.lastUsedAt || (key.lastUsedAt === selected.lastUsedAt && key.config.id < selected.config.id)) {
+      if (!selected || key.lastUsedAt < selected.lastUsedAt || (key.lastUsedAt === selected.lastUsedAt && key.apiKey.id < selected.apiKey.id)) {
         selected = key;
       }
     }
@@ -202,7 +219,7 @@ export class KeyScheduler {
     };
 
     return {
-      key: key.config,
+      key: syncApiKeyState(key),
       provider: key.provider,
       model: key.model,
       success: () =>
@@ -210,14 +227,16 @@ export class KeyScheduler {
           key.lastUsedAt = this.now();
           key.leased = false;
           key.resetAt = undefined;
-          this.groups.get(createGroupId(key.provider, key.model))?.availableIds.add(key.config.id);
+          syncApiKeyState(key);
+          this.groups.get(createGroupId(key.provider, key.model))?.availableIds.add(key.apiKey.id);
           await this.persist();
         }),
       release: () =>
         settle(async () => {
           key.leased = false;
+          syncApiKeyState(key);
           if (key.resetAt === undefined) {
-            this.groups.get(createGroupId(key.provider, key.model))?.availableIds.add(key.config.id);
+            this.groups.get(createGroupId(key.provider, key.model))?.availableIds.add(key.apiKey.id);
           }
         }),
       rateLimited: (options: RateLimitedOptions = {}) =>
@@ -227,8 +246,9 @@ export class KeyScheduler {
           const cooldownMs = options.cooldownMs ?? parsedRetryAfter ?? group.provider.defaultCooldownMs;
           key.leased = false;
           key.resetAt = this.now() + Math.max(0, cooldownMs);
-          group.availableIds.delete(key.config.id);
-          group.cooldowns.push({ keyId: key.config.id, resetAt: key.resetAt });
+          syncApiKeyState(key);
+          group.availableIds.delete(key.apiKey.id);
+          group.cooldowns.push({ keyId: key.apiKey.id, resetAt: key.resetAt });
           await this.persist();
         })
     };
@@ -239,12 +259,12 @@ export class KeyScheduler {
     for (const group of this.groups.values()) {
       for (const key of group.keysById.values()) {
         keys.push({
-          id: key.config.id,
+          id: key.apiKey.id,
           provider: key.provider,
           model: key.model,
           lastUsedAt: key.lastUsedAt || undefined,
           resetAt: key.resetAt,
-          metadata: key.config.metadata
+          metadata: key.apiKey.metadata
         });
       }
     }
@@ -273,4 +293,27 @@ export class KeyScheduler {
 
 function createGroupId(provider: string, model: string): string {
   return `${provider}\u0000${model}`;
+}
+
+function normalizeKeyConfig(key: KeyConfig, provider: string, model: string): APIKey {
+  const secret = key.secret ?? (isSecretString(key.value) ? key.value : typeof key.value === "string" ? new SecretString(key.value) : undefined);
+  if (!secret) {
+    throw new SchedulerConfigurationError(`Key "${key.id}" in "${provider}" / "${model}" is missing a secret value.`);
+  }
+
+  return {
+    id: key.id,
+    provider,
+    model,
+    secret,
+    exhausted: false,
+    metadata: key.metadata
+  };
+}
+
+function syncApiKeyState(key: RuntimeKey): APIKey {
+  key.apiKey.lastUsedAt = key.lastUsedAt > 0 ? new Date(key.lastUsedAt) : undefined;
+  key.apiKey.exhausted = key.resetAt !== undefined;
+  key.apiKey.resetAt = key.resetAt !== undefined ? new Date(key.resetAt) : undefined;
+  return key.apiKey;
 }

@@ -5,6 +5,39 @@ export class SchedulerConfigurationError extends Error {
   }
 }
 
+export interface SafeKeyErrorFields {
+  keyId?: string;
+  provider?: string;
+  model?: string;
+  resetAt?: Date | number;
+}
+
+export class KeyNotFoundError extends Error {
+  readonly keyId: string;
+  readonly provider?: string;
+  readonly model?: string;
+
+  constructor(message: string, options: { keyId: string; provider?: string; model?: string }) {
+    super(message);
+    this.name = "KeyNotFoundError";
+    this.keyId = options.keyId;
+    this.provider = options.provider;
+    this.model = options.model;
+  }
+}
+
+export class ProviderNotFoundError extends Error {
+  readonly provider: string;
+  readonly model?: string;
+
+  constructor(message: string, options: { provider: string; model?: string }) {
+    super(message);
+    this.name = "ProviderNotFoundError";
+    this.provider = options.provider;
+    this.model = options.model;
+  }
+}
+
 export class NoAvailableKeyError extends Error {
   readonly provider: string;
   readonly model: string;
@@ -16,6 +49,22 @@ export class NoAvailableKeyError extends Error {
     this.provider = options.provider;
     this.model = options.model;
     this.nextResetAt = options.nextResetAt;
+  }
+}
+
+export class KeyExhaustedError extends Error {
+  readonly keyId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly resetAt?: number;
+
+  constructor(message: string, options: { keyId: string; provider: string; model: string; resetAt?: number }) {
+    super(message);
+    this.name = "KeyExhaustedError";
+    this.keyId = options.keyId;
+    this.provider = options.provider;
+    this.model = options.model;
+    this.resetAt = options.resetAt;
   }
 }
 
