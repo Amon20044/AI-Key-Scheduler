@@ -4,6 +4,14 @@ Rate-limit aware API key scheduling for TypeScript and Node.js.
 
 Use it when your app has multiple API keys across AI providers and models, and you want each request to get a healthy key without hard-coding rotation logic into every SDK wrapper.
 
+> **Security Note**
+>
+> AI Key Manager is local-first by design. It does not phone home, collect analytics, send telemetry, proxy requests, or transmit your API keys, prompts, responses, headers, or metadata anywhere. Scheduler operations only run inside your Node.js process.
+>
+> Raw API keys are wrapped in `SecretString`, which redacts itself in `console.log`, `String()`, `JSON.stringify()`, and `util.inspect`. The only way to read the real key is the explicit `secret.value()` call, intended for the exact provider SDK request that needs it.
+>
+> By default, state is memory-only. Optional file persistence stores only non-secret scheduling metadata such as key IDs, provider/model names, `lastUsedAt`, and `resetAt`. Never log `secret.value()`, and load real keys from environment variables or your own secret manager.
+
 ## What It Does
 
 - Rotates keys per `provider + model`.
