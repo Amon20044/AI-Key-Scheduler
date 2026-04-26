@@ -15,6 +15,11 @@ export interface APIKey {
   lastUsedAt?: Date;
   exhausted: boolean;
   resetAt?: Date;
+  healthScore: number;
+  successCount: number;
+  rateLimitCount: number;
+  consecutiveRateLimits: number;
+  lastFailedAt?: Date;
   metadata?: Record<string, unknown>;
 }
 
@@ -29,6 +34,12 @@ export interface SchedulerOptions {
   providers: ProviderConfig[];
   state?: StateAdapter;
   now?: () => number;
+  keyIdentity?: KeyIdentityOptions;
+}
+
+export interface KeyIdentityOptions {
+  hmacSecret: string | SecretString;
+  onMismatch?: "reset" | "throw";
 }
 
 export interface AcquireRequest {
@@ -62,6 +73,8 @@ export interface KeyExecutionContext {
   model: string;
   attempt: number;
   maxAttempts: number;
+  remainingMs: number;
+  signal?: AbortSignal;
 }
 
 export interface KeyRetryEvent {
@@ -70,14 +83,34 @@ export interface KeyRetryEvent {
   model: string;
   attempt: number;
   maxAttempts: number;
+  remainingMs: number;
   retryAfter?: string | number | Date | null;
-  error: unknown;
+  errorName?: string;
+  errorCode?: string | number;
+  errorStatus?: number;
 }
 
 export interface WithKeyRetryOptions<T> extends AcquireRequest {
   execute(context: KeyExecutionContext): Promise<T>;
+  /**
+   * Defaults to the number of keys configured for the exact provider/model group.
+   */
   maxAttempts?: number;
+  /**
+   * Defaults to 60 seconds. The wrapper waits for cooling keys only while this
+   * deadline still allows another attempt.
+   */
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  signal?: AbortSignal;
+  /**
+   * Adds custom retry classification on top of the built-in 429/quota/exhausted
+   * detector. Return true to force a retry.
+   */
   isRetryableError?: (error: unknown) => boolean;
+  classifyError?: (error: unknown) => "retry" | "fail" | undefined;
   getRetryAfter?: (error: unknown) => string | number | Date | null | undefined;
   onRetry?: (event: KeyRetryEvent) => void | Promise<void>;
 }
@@ -88,6 +121,12 @@ export interface PersistedKeyState {
   model: string;
   lastUsedAt?: number;
   resetAt?: number;
+  keyFingerprint?: string;
+  healthScore?: number;
+  successCount?: number;
+  rateLimitCount?: number;
+  consecutiveRateLimits?: number;
+  lastFailedAt?: number;
   metadata?: Record<string, unknown>;
 }
 

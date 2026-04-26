@@ -36,9 +36,17 @@ By default, scheduler state is memory-only.
 - model
 - `lastUsedAt`
 - `resetAt`
+- optional HMAC key fingerprint
+- non-secret health counters
 - optional non-secret metadata
 
-It never persists raw API keys.
+It never persists raw API keys or HMAC secrets.
+
+## Key Identity
+
+If `keyIdentity.hmacSecret` is configured, AI Key Manager stores a non-secret HMAC fingerprint for each key. This lets the scheduler detect when a stable key ID now points to a different real token after a server restart or env var swap.
+
+The default mismatch behavior is to reset old cooldown and health state for that key. Users can choose `onMismatch: "throw"` to fail closed with `KeyIdentityMismatchError`.
 
 ## Logging
 

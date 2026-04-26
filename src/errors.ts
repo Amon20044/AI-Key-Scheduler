@@ -57,14 +57,64 @@ export class KeyExhaustedError extends Error {
   readonly provider: string;
   readonly model: string;
   readonly resetAt?: number;
+  readonly reason?: "max_attempts" | "timeout" | "no_available_key";
+  readonly attempts?: number;
+  readonly maxAttempts?: number;
+  readonly timeoutMs?: number;
 
-  constructor(message: string, options: { keyId: string; provider: string; model: string; resetAt?: number }) {
+  constructor(
+    message: string,
+    options: {
+      keyId: string;
+      provider: string;
+      model: string;
+      resetAt?: number;
+      reason?: "max_attempts" | "timeout" | "no_available_key";
+      attempts?: number;
+      maxAttempts?: number;
+      timeoutMs?: number;
+    }
+  ) {
     super(message);
     this.name = "KeyExhaustedError";
     this.keyId = options.keyId;
     this.provider = options.provider;
     this.model = options.model;
     this.resetAt = options.resetAt;
+    this.reason = options.reason;
+    this.attempts = options.attempts;
+    this.maxAttempts = options.maxAttempts;
+    this.timeoutMs = options.timeoutMs;
+  }
+}
+
+export class RetryAbortedError extends Error {
+  readonly provider: string;
+  readonly model: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+
+  constructor(message: string, options: { provider: string; model: string; attempts: number; maxAttempts: number }) {
+    super(message);
+    this.name = "RetryAbortedError";
+    this.provider = options.provider;
+    this.model = options.model;
+    this.attempts = options.attempts;
+    this.maxAttempts = options.maxAttempts;
+  }
+}
+
+export class KeyIdentityMismatchError extends Error {
+  readonly keyId: string;
+  readonly provider: string;
+  readonly model: string;
+
+  constructor(message: string, options: { keyId: string; provider: string; model: string }) {
+    super(message);
+    this.name = "KeyIdentityMismatchError";
+    this.keyId = options.keyId;
+    this.provider = options.provider;
+    this.model = options.model;
   }
 }
 

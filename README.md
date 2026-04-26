@@ -32,6 +32,8 @@ What it does:
 - Uses Retry-After when available; otherwise uses the provider default cooldown.
 - Provides `scheduler.withRetry()` / `withKeyRetry()` to wrap LangChain, Vercel AI SDK, or any custom generation function.
 - Retries retryable AI errors across the total number of keys configured for that provider/model.
+- Uses a 60 second default retry deadline and waits for cooling keys only when their reset is inside that deadline.
+- Supports AbortSignal, SSE/start-stream startup retry, health-aware key tie-breaking, and optional HMAC key identity checks.
 - Persists only non-secret scheduling state if FileStateAdapter is used.
 - Keeps raw API keys local and wrapped in SecretString.
 - Makes no telemetry or external network calls by itself.
@@ -40,11 +42,14 @@ How to use it:
 1. Import `KeyScheduler`, `FileStateAdapter` or `MemoryStateAdapter`, and `isRateLimitError` from `ai-key-manager`.
 2. Configure providers with stable key IDs and API key values from environment variables.
 3. Prefer wrapping AI calls with:
-   `await scheduler.withRetry({ provider, model, execute })`
-4. Inside `execute`, pass the key to the provider SDK using:
+   `await scheduler.withRetry({ provider, model, execute, signal })`
+4. For SSE/start-stream calls, use:
+   `await scheduler.withStreamRetry({ provider, model, execute, signal })`
+5. Inside `execute`, pass the key to the provider SDK using:
    `apiKey`
-5. The wrapper automatically calls `success()`, `rateLimited()`, or `release()`.
-6. It treats 429, rate-limit, quota, and exhausted-key messages as retryable.
+6. The wrapper automatically calls `success()`, `rateLimited()`, or `release()`.
+7. It treats 429, rate-limit, quota, and exhausted-key messages as retryable.
+8. It throws safe package errors when attempts, timeout, or abort stop the retry loop.
 
 Manual flow:
 1. Before calling the AI SDK, call:
@@ -70,8 +75,9 @@ Preferred wrapper pattern:
 const result = await scheduler.withRetry({
   provider: "openrouter",
   model,
-  execute: async ({ apiKey }) => {
-    return callProvider({ apiKey, model, prompt });
+  signal: abortController.signal,
+  execute: async ({ apiKey, signal }) => {
+    return callProvider({ apiKey, model, prompt, signal });
   }
 });
 
@@ -145,13 +151,15 @@ const scheduler = new KeyScheduler({
 const text = await scheduler.withRetry({
   provider: "openrouter",
   model,
-  execute: async ({ apiKey, key, attempt, maxAttempts }) => {
+  timeoutMs: 60_000,
+  execute: async ({ apiKey, key, attempt, maxAttempts, remainingMs, signal }) => {
     // `apiKey` is the raw key. Use it only for the provider SDK call.
-    // `key.id`, `attempt`, and `maxAttempts` are safe for logs.
+    // `key.id`, `attempt`, `maxAttempts`, and `remainingMs` are safe for logs.
     return generateContent({
       apiKey,
       model,
-      prompt: "Write a short hello world."
+      prompt: "Write a short hello world.",
+      signal
     });
   }
 });
@@ -168,6 +176,63 @@ const text = await scheduler.withRetry({
 - messages containing `exhausted`
 
 It retries up to the total number of keys configured for that exact `provider + model`. Non-rate-limit errors are released and rethrown immediately.
+
+## Wrap Any Provider Function
+
+AI Key Manager does not care which AI SDK you use. If your function accepts an API key, wrap it:
+
+```ts
+const result = await scheduler.withRetry({
+  provider: "google",
+  model: "gemini-2.5-flash",
+  execute: async ({ apiKey, signal }) => {
+    return generateWithAnySDK({
+      apiKey,
+      prompt: "Summarize this document.",
+      signal
+    });
+  }
+});
+```
+
+For streaming/SSE startup, use the stream alias:
+
+```ts
+const stream = await scheduler.withStreamRetry({
+  provider: "openrouter",
+  model,
+  execute: async ({ apiKey, signal }) => {
+    return startProviderStream({ apiKey, model, prompt, signal });
+  }
+});
+```
+
+`withStreamRetry()` retries only failures that happen before the stream is returned. Once a stream exists, AI Key Manager marks the key as successful and does not retry mid-stream, which avoids duplicated tokens or double-billed output.
+
+## Retry Intelligence
+
+- **Key budget:** defaults to the total key count for the selected `provider + model`.
+- **Deadline:** defaults to `60_000ms`; override with `timeoutMs`.
+- **Cooldown wait:** if every key is cooling and the soonest reset is inside the deadline, the wrapper waits and retries.
+- **Safe failures:** if attempts or timeout are exhausted, it throws `KeyExhaustedError` with safe fields only.
+- **Abort:** pass `signal` to abort before acquire, before execute, or while waiting for cooldown.
+- **Custom classification:** use `classifyError(error)` to force `"retry"` or `"fail"` for provider-specific SDK errors.
+
+## Key Identity Safety
+
+If users accidentally swap environment variables after a restart, a stable key ID can point to a different real token. Enable HMAC identity checks to avoid carrying old cooldown/health state onto a different token:
+
+```ts
+const scheduler = new KeyScheduler({
+  providers,
+  keyIdentity: {
+    hmacSecret: process.env.AI_KEY_MANAGER_HMAC_SECRET!,
+    onMismatch: "reset"
+  }
+});
+```
+
+AI Key Manager stores only an HMAC fingerprint, never the raw API key or HMAC secret. With `onMismatch: "reset"`, old cooldown and health state for that key ID is ignored. With `onMismatch: "throw"`, the scheduler throws `KeyIdentityMismatchError`.
 
 ## Manual Lease Flow
 
@@ -624,10 +689,38 @@ import {
 
 `parseRetryAfter()` supports seconds, HTTP date strings, and `Date` values. Numeric values are interpreted as seconds, matching the HTTP `Retry-After` header.
 
+## Release Log
+
+### v0.1.0
+
+- Core provider/model/key scheduler.
+- Greedy LRU key selection.
+- Cooldown min heap for exhausted keys.
+- ESM, CJS, and TypeScript declarations.
+- Memory and file state adapters.
+
+### v0.2.0
+
+- `SecretString` redaction for logs, JSON, string coercion, and inspect output.
+- Safe logging helpers and security-focused errors.
+- No-telemetry guarantees and network-silence tests.
+- `SECURITY.md` with local-first trust model.
+
+### v0.2.1
+
+- Smart `withRetry()` / `withKeyRetry()` wrappers for LangChain, Vercel AI SDK, and any provider function.
+- 60s default retry deadline, total-key attempt budget, and cooldown-aware waiting.
+- SSE/start-stream startup retry via `withStreamRetry()` / `withStreamKeyRetry()`.
+- AbortSignal support for acquire/execute/cooldown waits.
+- Simple per-key health score for smarter tie-breaking.
+- Optional HMAC key identity checks to detect swapped environment keys after restart.
+
 ## Development
 
 ```sh
 npm install
+npm run lint
+npm run test:security
 npm test
 npm run typecheck
 npm run build

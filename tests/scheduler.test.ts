@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   FileStateAdapter,
+  KeyIdentityMismatchError,
   KeyScheduler,
   MemoryStateAdapter,
   NoAvailableKeyError,
@@ -121,6 +122,87 @@ describe("KeyScheduler", () => {
     expect(restored.key.id).toBe("key-1");
   });
 
+  it("persists an HMAC key fingerprint without persisting the raw key", async () => {
+    let now = 10_000;
+    const dir = await mkdtemp(join(tmpdir(), "key-scheduler-identity-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "state.json");
+
+    const scheduler = new KeyScheduler({
+      providers: [provider({ keys: [{ id: "key-0", value: "secret-0" }] })],
+      state: new FileStateAdapter(filePath),
+      keyIdentity: { hmacSecret: "local-hmac-secret" },
+      now: () => now
+    });
+
+    const lease = await scheduler.acquire({ provider: "openrouter", model: "test-model" });
+    now = 11_000;
+    await lease.success();
+
+    const raw = await readFile(filePath, "utf8");
+    expect(raw).toContain("keyFingerprint");
+    expect(raw).not.toContain("secret-0");
+    expect(raw).not.toContain("local-hmac-secret");
+  });
+
+  it("resets persisted cooldown and health when HMAC identity detects a swapped key", async () => {
+    let now = 1_000;
+    const state = new MemoryStateAdapter();
+
+    const firstScheduler = new KeyScheduler({
+      providers: [provider({ keys: [{ id: "key-0", value: "old-secret" }] })],
+      state,
+      keyIdentity: { hmacSecret: "local-hmac-secret" },
+      now: () => now
+    });
+
+    const lease = await firstScheduler.acquire({ provider: "openrouter", model: "test-model" });
+    await lease.rateLimited({ cooldownMs: 60_000 });
+
+    const secondScheduler = new KeyScheduler({
+      providers: [provider({ keys: [{ id: "key-0", value: "new-secret" }] })],
+      state,
+      keyIdentity: { hmacSecret: "local-hmac-secret" },
+      now: () => now
+    });
+
+    const resetLease = await secondScheduler.acquire({ provider: "openrouter", model: "test-model" });
+    expect(resetLease.key.id).toBe("key-0");
+    expect(resetLease.key.exhausted).toBe(false);
+    expect(resetLease.key.healthScore).toBe(1);
+  });
+
+  it("throws a safe error for HMAC identity mismatch when configured to throw", async () => {
+    let now = 1_000;
+    const state = new MemoryStateAdapter();
+
+    const firstScheduler = new KeyScheduler({
+      providers: [provider({ keys: [{ id: "key-0", value: "old-secret" }] })],
+      state,
+      keyIdentity: { hmacSecret: "local-hmac-secret" },
+      now: () => now
+    });
+
+    const lease = await firstScheduler.acquire({ provider: "openrouter", model: "test-model" });
+    await lease.rateLimited({ cooldownMs: 60_000 });
+
+    const secondScheduler = new KeyScheduler({
+      providers: [provider({ keys: [{ id: "key-0", value: "new-secret" }] })],
+      state,
+      keyIdentity: { hmacSecret: "local-hmac-secret", onMismatch: "throw" },
+      now: () => now
+    });
+
+    await expect(secondScheduler.acquire({ provider: "openrouter", model: "test-model" })).rejects.toMatchObject({
+      name: "KeyIdentityMismatchError",
+      keyId: "key-0",
+      provider: "openrouter",
+      model: "test-model"
+    });
+    await expect(secondScheduler.acquire({ provider: "openrouter", model: "test-model" })).rejects.not.toThrow("old-secret");
+    await expect(secondScheduler.acquire({ provider: "openrouter", model: "test-model" })).rejects.not.toThrow("new-secret");
+  });
+
   it("restores expired persisted cooldowns as available", async () => {
     const state = new MemoryStateAdapter({
       version: 1,
@@ -189,6 +271,27 @@ describe("KeyScheduler", () => {
     expect(openrouter.key.secret.value()).toBe("a");
     expect(google.provider).toBe("google");
     expect(google.key.secret.value()).toBe("b");
+  });
+
+  it("tracks health and uses health score as a tie-breaker for equally unused keys", async () => {
+    let now = 1_000;
+    const scheduler = new KeyScheduler({
+      providers: [provider({ defaultCooldownMs: 100 })],
+      state: new MemoryStateAdapter(),
+      now: () => now
+    });
+
+    const unhealthy = await scheduler.acquire({ provider: "openrouter", model: "test-model" });
+    await unhealthy.rateLimited();
+    expect(unhealthy.key.healthScore).toBeLessThan(1);
+    expect(unhealthy.key.rateLimitCount).toBe(1);
+
+    now = 1_100;
+    const next = await scheduler.acquire({ provider: "openrouter", model: "test-model" });
+    expect(next.key.id).toBe("key-1");
+    await next.success();
+    expect(next.key.successCount).toBe(1);
+    expect(next.key.consecutiveRateLimits).toBe(0);
   });
 
   it("serializes concurrent acquires inside one process", async () => {

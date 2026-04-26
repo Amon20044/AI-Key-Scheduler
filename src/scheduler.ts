@@ -1,5 +1,6 @@
+import { createHmac } from "node:crypto";
 import { MemoryStateAdapter } from "./adapters/memory.js";
-import { NoAvailableKeyError, ProviderNotFoundError, SchedulerConfigurationError } from "./errors.js";
+import { KeyIdentityMismatchError, NoAvailableKeyError, ProviderNotFoundError, SchedulerConfigurationError } from "./errors.js";
 import { MinHeap } from "./heap.js";
 import { parseRetryAfter } from "./retryAfter.js";
 import { isSecretString, SecretString } from "./secret.js";
@@ -9,6 +10,7 @@ import type {
   APIKey,
   KeyConfig,
   KeyGroupInfo,
+  KeyIdentityOptions,
   KeyLease,
   PersistedKeyState,
   PersistedSchedulerState,
@@ -23,6 +25,7 @@ interface RuntimeKey {
   apiKey: APIKey;
   provider: string;
   model: string;
+  keyFingerprint?: string;
   lastUsedAt: number;
   resetAt?: number;
   leased: boolean;
@@ -43,12 +46,19 @@ export class KeyScheduler {
   private readonly groups = new Map<string, KeyGroup>();
   private readonly state: StateAdapter;
   private readonly now: () => number;
+  private readonly keyIdentity?: Required<KeyIdentityOptions>;
   private initPromise?: Promise<void>;
   private mutex: Promise<void> = Promise.resolve();
 
   constructor(options: SchedulerOptions) {
     this.state = options.state ?? new MemoryStateAdapter();
     this.now = options.now ?? Date.now;
+    this.keyIdentity = options.keyIdentity
+      ? {
+          hmacSecret: options.keyIdentity.hmacSecret,
+          onMismatch: options.keyIdentity.onMismatch ?? "reset"
+        }
+      : undefined;
     this.configure(options.providers);
   }
 
@@ -97,6 +107,27 @@ export class KeyScheduler {
     return withKeyRetry(this, options);
   }
 
+  async withStreamRetry<T>(options: WithKeyRetryOptions<T>): Promise<T> {
+    return withKeyRetry(this, options);
+  }
+
+  private createKeyFingerprint(key: APIKey): string | undefined {
+    if (!this.keyIdentity) {
+      return undefined;
+    }
+
+    const hmacSecret = isSecretString(this.keyIdentity.hmacSecret) ? this.keyIdentity.hmacSecret.value() : this.keyIdentity.hmacSecret;
+    return createHmac("sha256", hmacSecret)
+      .update(key.provider)
+      .update("\u0000")
+      .update(key.model)
+      .update("\u0000")
+      .update(key.id)
+      .update("\u0000")
+      .update(key.secret.value())
+      .digest("hex");
+  }
+
   private configure(providers: ProviderConfig[]): void {
     for (const provider of providers) {
       if (provider.defaultCooldownMs < 0) {
@@ -120,6 +151,7 @@ export class KeyScheduler {
           apiKey,
           provider: provider.name,
           model: provider.model,
+          keyFingerprint: this.createKeyFingerprint(apiKey),
           lastUsedAt: 0,
           leased: false
         });
@@ -146,7 +178,7 @@ export class KeyScheduler {
 
   private async loadState(): Promise<void> {
     const saved = await this.state.load();
-    if (!saved) {
+      if (!saved) {
       return;
     }
 
@@ -157,8 +189,26 @@ export class KeyScheduler {
         continue;
       }
 
+      if (this.keyIdentity && keyState.keyFingerprint !== key.keyFingerprint) {
+        if (this.keyIdentity.onMismatch === "throw") {
+          throw new KeyIdentityMismatchError(`Stored key identity does not match key "${keyState.id}".`, {
+            keyId: keyState.id,
+            provider: keyState.provider,
+            model: keyState.model
+          });
+        }
+
+        resetRuntimeKeyState(key);
+        continue;
+      }
+
       key.lastUsedAt = keyState.lastUsedAt ?? 0;
       key.resetAt = keyState.resetAt;
+      key.apiKey.healthScore = clampHealthScore(keyState.healthScore ?? key.apiKey.healthScore);
+      key.apiKey.successCount = keyState.successCount ?? key.apiKey.successCount;
+      key.apiKey.rateLimitCount = keyState.rateLimitCount ?? key.apiKey.rateLimitCount;
+      key.apiKey.consecutiveRateLimits = keyState.consecutiveRateLimits ?? key.apiKey.consecutiveRateLimits;
+      key.apiKey.lastFailedAt = keyState.lastFailedAt !== undefined ? new Date(keyState.lastFailedAt) : undefined;
       if (key.resetAt !== undefined) {
         if (key.resetAt > this.now()) {
           group.availableIds.delete(key.apiKey.id);
@@ -208,7 +258,12 @@ export class KeyScheduler {
         continue;
       }
 
-      if (!selected || key.lastUsedAt < selected.lastUsedAt || (key.lastUsedAt === selected.lastUsedAt && key.apiKey.id < selected.apiKey.id)) {
+      if (
+        !selected ||
+        key.lastUsedAt < selected.lastUsedAt ||
+        (key.lastUsedAt === selected.lastUsedAt && key.apiKey.healthScore > selected.apiKey.healthScore) ||
+        (key.lastUsedAt === selected.lastUsedAt && key.apiKey.healthScore === selected.apiKey.healthScore && key.apiKey.id < selected.apiKey.id)
+      ) {
         selected = key;
       }
     }
@@ -247,6 +302,7 @@ export class KeyScheduler {
           key.lastUsedAt = this.now();
           key.leased = false;
           key.resetAt = undefined;
+          recordSuccess(key);
           syncApiKeyState(key);
           this.groups.get(createGroupId(key.provider, key.model))?.availableIds.add(key.apiKey.id);
           await this.persist();
@@ -266,6 +322,7 @@ export class KeyScheduler {
           const cooldownMs = options.cooldownMs ?? parsedRetryAfter ?? group.provider.defaultCooldownMs;
           key.leased = false;
           key.resetAt = this.now() + Math.max(0, cooldownMs);
+          recordRateLimit(key, this.now());
           syncApiKeyState(key);
           group.availableIds.delete(key.apiKey.id);
           group.cooldowns.push({ keyId: key.apiKey.id, resetAt: key.resetAt });
@@ -284,6 +341,12 @@ export class KeyScheduler {
           model: key.model,
           lastUsedAt: key.lastUsedAt || undefined,
           resetAt: key.resetAt,
+          keyFingerprint: key.keyFingerprint,
+          healthScore: key.apiKey.healthScore,
+          successCount: key.apiKey.successCount,
+          rateLimitCount: key.apiKey.rateLimitCount,
+          consecutiveRateLimits: key.apiKey.consecutiveRateLimits,
+          lastFailedAt: key.apiKey.lastFailedAt?.getTime(),
           metadata: key.apiKey.metadata
         });
       }
@@ -327,6 +390,10 @@ function normalizeKeyConfig(key: KeyConfig, provider: string, model: string): AP
     model,
     secret,
     exhausted: false,
+    healthScore: 1,
+    successCount: 0,
+    rateLimitCount: 0,
+    consecutiveRateLimits: 0,
     metadata: key.metadata
   };
 }
@@ -336,4 +403,35 @@ function syncApiKeyState(key: RuntimeKey): APIKey {
   key.apiKey.exhausted = key.resetAt !== undefined;
   key.apiKey.resetAt = key.resetAt !== undefined ? new Date(key.resetAt) : undefined;
   return key.apiKey;
+}
+
+function recordSuccess(key: RuntimeKey): void {
+  key.apiKey.successCount += 1;
+  key.apiKey.consecutiveRateLimits = 0;
+  key.apiKey.healthScore = clampHealthScore(key.apiKey.healthScore + 0.05);
+}
+
+function recordRateLimit(key: RuntimeKey, now: number): void {
+  key.apiKey.rateLimitCount += 1;
+  key.apiKey.consecutiveRateLimits += 1;
+  key.apiKey.lastFailedAt = new Date(now);
+  key.apiKey.healthScore = clampHealthScore(key.apiKey.healthScore - Math.min(0.5, 0.15 * key.apiKey.consecutiveRateLimits));
+}
+
+function resetRuntimeKeyState(key: RuntimeKey): void {
+  key.lastUsedAt = 0;
+  key.resetAt = undefined;
+  key.apiKey.healthScore = 1;
+  key.apiKey.successCount = 0;
+  key.apiKey.rateLimitCount = 0;
+  key.apiKey.consecutiveRateLimits = 0;
+  key.apiKey.lastFailedAt = undefined;
+  syncApiKeyState(key);
+}
+
+function clampHealthScore(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.min(1, Math.max(0, value));
 }

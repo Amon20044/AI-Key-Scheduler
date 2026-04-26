@@ -9,6 +9,8 @@ import {
   KeyExhaustedError,
   KeyScheduler,
   MemoryStateAdapter,
+  RetryAbortedError,
+  withStreamKeyRetry,
   withKeyRetry
 } from "../src/index.js";
 
@@ -64,16 +66,99 @@ describe("withKeyRetry", () => {
     expect(result).toBe("openrouter-a");
   });
 
+  it("can be called as scheduler.withStreamRetry and only retries stream startup failures", async () => {
+    const scheduler = schedulerWithThreeKeys();
+    const execute = vi.fn(async ({ key }) => {
+      if (execute.mock.calls.length === 1) {
+        throw new Error("429 stream start exhausted");
+      }
+      return { stream: true, keyId: key.id };
+    });
+
+    const result = await scheduler.withStreamRetry({
+      provider: "openrouter",
+      model: "test-model",
+      execute
+    });
+
+    expect(result).toEqual({ stream: true, keyId: "openrouter-b" });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("exports withStreamKeyRetry as a semantic start-stream alias", async () => {
+    const scheduler = schedulerWithThreeKeys();
+
+    const result = await withStreamKeyRetry(scheduler, {
+      provider: "openrouter",
+      model: "test-model",
+      execute: async ({ key }) => ({ readable: true, keyId: key.id })
+    });
+
+    expect(result).toEqual({ readable: true, keyId: "openrouter-a" });
+  });
+
   it("detects exhausted/quota/rate-limit messages as retryable", () => {
     expect(isRetryableKeyError(new Error("429 Too Many Requests"))).toBe(true);
     expect(isRetryableKeyError(new Error("RESOURCE_EXHAUSTED: quota exceeded"))).toBe(true);
     expect(isRetryableKeyError({ code: "rate_limit_exceeded" })).toBe(true);
+    expect(isRetryableKeyError({ body: { error: { message: "insufficient_quota" } } })).toBe(true);
+    expect(isRetryableKeyError({ response: { data: { message: "key_exhausted" } } })).toBe(true);
+    expect(isRetryableKeyError({ errors: [{ message: "quota exceeded" }] })).toBe(true);
     expect(isRetryableKeyError({ status: 500, message: "database failed" })).toBe(false);
+  });
+
+  it("lets classifyError force retry or fail decisions", async () => {
+    const retryScheduler = schedulerWithThreeKeys();
+    let retryCalls = 0;
+    let shouldRetry = true;
+    const retryResult = await retryScheduler.withRetry({
+      provider: "openrouter",
+      model: "test-model",
+      classifyError: () => {
+        if (shouldRetry) {
+          shouldRetry = false;
+          return "retry";
+        }
+        return undefined;
+      },
+      execute: async () => {
+        retryCalls += 1;
+        if (retryCalls === 1) {
+          throw new Error("custom transient");
+        }
+        return "retried";
+      }
+    });
+
+    expect(retryResult).toBe("retried");
+
+    const failScheduler = schedulerWithThreeKeys();
+    await expect(
+      failScheduler.withRetry({
+        provider: "openrouter",
+        model: "test-model",
+        classifyError: () => "fail",
+        execute: async () => {
+          throw new Error("429 but user wants fail");
+        }
+      })
+    ).rejects.toThrow("429 but user wants fail");
   });
 
   it("uses Retry-After headers to override provider cooldown", async () => {
     let now = 1_000;
-    const scheduler = schedulerWithThreeKeys(() => now);
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "openrouter",
+          model: "test-model",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-env-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter(),
+      now: () => now
+    });
 
     await expect(
       scheduler.withRetry({
@@ -93,9 +178,9 @@ describe("withKeyRetry", () => {
       })
     ).rejects.toBeInstanceOf(KeyExhaustedError);
 
-    const next = await scheduler.acquire({ provider: "openrouter", model: "test-model" });
-    expect(next.key.id).toBe("openrouter-b");
-    await next.release();
+    await expect(scheduler.acquire({ provider: "openrouter", model: "test-model" })).rejects.toMatchObject({
+      nextResetAt: 3_000
+    });
 
     now = 3_000;
     const released = await scheduler.acquire({ provider: "openrouter", model: "test-model" });
@@ -108,26 +193,136 @@ describe("withKeyRetry", () => {
       throw new Error(`429 exhausted key ${apiKey}`);
     });
 
-    await expect(
-      scheduler.withRetry({
-        provider: "openrouter",
-        model: "test-model",
-        execute
-      })
-    ).rejects.toMatchObject({
+    const promise = scheduler.withRetry({
+      provider: "openrouter",
+      model: "test-model",
+      execute
+    });
+
+    await expect(promise).rejects.toMatchObject({
       name: "KeyExhaustedError",
       provider: "openrouter",
-      model: "test-model"
+      model: "test-model",
+      reason: "max_attempts",
+      attempts: 3,
+      maxAttempts: 3
     });
+
+    await expect(promise).rejects.not.toThrow("sk-env");
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits for the next reset when all keys are cooling and timeout allows it", async () => {
+    let now = 1_000;
+    const sleeps: number[] = [];
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "openrouter",
+          model: "test-model",
+          defaultCooldownMs: 250,
+          keys: [{ id: "openrouter-a", value: "sk-env-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter(),
+      now: () => now
+    });
+
+    const execute = vi.fn(async () => {
+      if (execute.mock.calls.length === 1) {
+        throw new Error("429 rate limit");
+      }
+      return "ok-after-reset";
+    });
+
+    const result = await scheduler.withRetry({
+      provider: "openrouter",
+      model: "test-model",
+      maxAttempts: 2,
+      timeoutMs: 1_000,
+      now: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        now += ms;
+      },
+      execute
+    });
+
+    expect(result).toBe("ok-after-reset");
+    expect(sleeps).toEqual([250]);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws a safe timeout error when the one-minute retry deadline is reached before reset", async () => {
+    let now = 1_000;
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "openrouter",
+          model: "test-model",
+          defaultCooldownMs: 60_001,
+          keys: [{ id: "openrouter-a", value: "sk-env-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter(),
+      now: () => now
+    });
+
+    const promise = scheduler.withRetry({
+      provider: "openrouter",
+      model: "test-model",
+      maxAttempts: 2,
+      timeoutMs: 60_000,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      execute: async ({ apiKey }) => {
+        throw new Error(`429 exhausted key ${apiKey}`);
+      }
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      name: "KeyExhaustedError",
+      provider: "openrouter",
+      model: "test-model",
+      reason: "timeout",
+      attempts: 1,
+      maxAttempts: 2,
+      timeoutMs: 60_000
+    });
+    await expect(promise).rejects.not.toThrow("sk-env-a");
+  });
+
+  it("does not expose raw provider errors to onRetry handlers", async () => {
+    const scheduler = schedulerWithThreeKeys();
+    const events: unknown[] = [];
 
     await expect(
       scheduler.withRetry({
         provider: "openrouter",
         model: "test-model",
-        execute
+        maxAttempts: 1,
+        onRetry: (event) => {
+          events.push(event);
+        },
+        execute: async ({ apiKey }) => {
+          const error = new Error(`429 exhausted key ${apiKey}`);
+          Object.assign(error, { status: 429, code: "rate_limit_exceeded" });
+          throw error;
+        }
       })
-    ).rejects.not.toThrow("sk-env");
-    expect(execute).toHaveBeenCalledTimes(3);
+    ).rejects.toBeInstanceOf(KeyExhaustedError);
+
+    expect(JSON.stringify(events)).not.toContain("sk-env");
+    expect(events).toMatchObject([
+      {
+        keyId: "openrouter-a",
+        errorName: "Error",
+        errorCode: "rate_limit_exceeded",
+        errorStatus: 429
+      }
+    ]);
   });
 
   it("releases the key and does not retry non-rate-limit failures", async () => {
@@ -153,6 +348,78 @@ describe("withKeyRetry", () => {
     expect(extractRetryAfter({ retryAfter: "3" })).toBe("3");
     expect(extractRetryAfter({ headers: new Headers({ "retry-after": "4" }) })).toBe("4");
     expect(extractRetryAfter({ responseHeaders: { "Retry-After": "5" } })).toBe("5");
+    expect(extractRetryAfter({ headers: { get: (name: string) => (name.toLowerCase() === "retry-after" ? "6" : null) } })).toBe("6");
+  });
+
+  it("aborts before the first attempt with a safe error", async () => {
+    const scheduler = schedulerWithThreeKeys();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      scheduler.withRetry({
+        provider: "openrouter",
+        model: "test-model",
+        signal: controller.signal,
+        execute: async () => "never"
+      })
+    ).rejects.toMatchObject({
+      name: "RetryAbortedError",
+      provider: "openrouter",
+      model: "test-model",
+      attempts: 0,
+      maxAttempts: 3
+    });
+  });
+
+  it("passes AbortSignal into execute", async () => {
+    const scheduler = schedulerWithThreeKeys();
+    const controller = new AbortController();
+
+    await scheduler.withRetry({
+      provider: "openrouter",
+      model: "test-model",
+      signal: controller.signal,
+      execute: async ({ signal }) => {
+        expect(signal).toBe(controller.signal);
+        return "ok";
+      }
+    });
+  });
+
+  it("aborts while sleeping for cooldown and releases safe RetryAbortedError", async () => {
+    let now = 1_000;
+    const controller = new AbortController();
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "openrouter",
+          model: "test-model",
+          defaultCooldownMs: 250,
+          keys: [{ id: "openrouter-a", value: "sk-env-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter(),
+      now: () => now
+    });
+
+    await expect(
+      scheduler.withRetry({
+        provider: "openrouter",
+        model: "test-model",
+        maxAttempts: 2,
+        timeoutMs: 1_000,
+        now: () => now,
+        signal: controller.signal,
+        sleep: async () => {
+          controller.abort();
+          await new Promise(() => undefined);
+        },
+        execute: async () => {
+          throw new Error("429 rate limit");
+        }
+      })
+    ).rejects.toBeInstanceOf(RetryAbortedError);
   });
 
   it("works with file state without persisting raw env keys", async () => {
