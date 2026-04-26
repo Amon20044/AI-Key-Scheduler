@@ -8,6 +8,8 @@ const RETRYABLE_ERROR_PATTERN =
   /\b429\b|rate[\s_-]?limit|too many requests|quota|exhausted|resource[\s_-]?exhausted|key[\s_-]?exhausted|insufficient[\s_-]?quota|quota[\s_-]?exceeded/i;
 const FALLBACK_ERROR_PATTERN =
   /upstream[\s_-]?error|not[\s_-]?found|model[\s\S]{0,80}not[\s_-]?found|not supported for generatecontent|unsupported model|model_not_found|not_supported|provider[\s_-]?(?:blacklist(?:ed)?|blocked|banned|disabled)|blacklist(?:ed)?|403[\s\S]{0,20}(?:forbidden|blacklist(?:ed)?|blocked)|404/i;
+const MODEL_ACCESS_DENIED_OR_NOT_FOUND_PATTERN =
+  /model[\s\S]{0,80}not[\s_-]?found|not[\s_-]?found|model_not_found|access[\s_-]?denied|forbidden|403|404|not supported for generatecontent|unsupported model|blacklist(?:ed)?|provider[\s_-]?(?:blocked|disabled|banned)/i;
 const routeAffinityByScheduler = new WeakMap<KeyScheduler, Map<string, AcquireRequest>>();
 
 export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): Promise<T> {
@@ -105,18 +107,25 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
           await lease.release();
           clearRouteAffinityIfFailed(scheduler, options, route);
           if (routeIndex >= routes.length - 1) {
-            throw new ProviderRouteError(`Provider/model route failed for provider "${route.provider}" and model "${route.model}".`, {
+            const routeErrorMessage = isModelAccessDeniedOrNotFoundError(error)
+              ? "Model access denied or not found (404) across all configured provider/model routes."
+              : `Provider/model route failed for provider "${route.provider}" and model "${route.model}".`;
+
+            throw new ProviderRouteError(routeErrorMessage, {
               provider: route.provider,
               model: route.model,
               routesTried: routes.length
             });
           }
 
+          const nextRoute = routes[routeIndex + 1];
+          rememberRouteAffinity(scheduler, options, nextRoute);
+
           await options.onFallback?.({
             fromProvider: route.provider,
             fromModel: route.model,
-            toProvider: routes[routeIndex + 1].provider,
-            toModel: routes[routeIndex + 1].model,
+            toProvider: nextRoute.provider,
+            toModel: nextRoute.model,
             attempt,
             maxAttempts,
             remainingMs: Math.max(0, deadline - now()),
@@ -214,7 +223,7 @@ export function isFallbackRouteError(error: unknown, options: Pick<WithKeyRetryO
     code === "BLACKLISTED_PROVIDER" ||
     code === "PROVIDER_BLOCKED"
   ) {
-    return FALLBACK_ERROR_PATTERN.test(text);
+    return true;
   }
 
   return (status === 404 || status === 403 || code === undefined) && FALLBACK_ERROR_PATTERN.test(text);
@@ -227,6 +236,33 @@ function classifyKeyError<T>(error: unknown, options: WithKeyRetryOptions<T>): "
   }
 
   return isRetryableKeyError(error, options.isRetryableError) ? "retry" : "fail";
+}
+
+function isModelAccessDeniedOrNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return MODEL_ACCESS_DENIED_OR_NOT_FOUND_PATTERN.test(String(error));
+  }
+
+  const maybeError = error as { status?: unknown; statusCode?: unknown; code?: unknown };
+  const status = maybeError.status ?? maybeError.statusCode;
+  const code = typeof maybeError.code === "string" ? maybeError.code.toUpperCase() : undefined;
+  const text = collectErrorText(error);
+
+  if (
+    status === 403 ||
+    status === 404 ||
+    code === "UPSTREAM_ERROR" ||
+    code === "NOT_FOUND" ||
+    code === "MODEL_NOT_FOUND" ||
+    code === "FORBIDDEN" ||
+    code === "PROVIDER_BLACKLISTED" ||
+    code === "BLACKLISTED_PROVIDER" ||
+    code === "PROVIDER_BLOCKED"
+  ) {
+    return MODEL_ACCESS_DENIED_OR_NOT_FOUND_PATTERN.test(text);
+  }
+
+  return MODEL_ACCESS_DENIED_OR_NOT_FOUND_PATTERN.test(text);
 }
 
 function buildRoutes<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): AcquireRequest[] {

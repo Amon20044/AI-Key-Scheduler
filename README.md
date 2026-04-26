@@ -282,11 +282,14 @@ await scheduler.withRetry({
 
 If every route fails before generation starts, the wrapper throws `ProviderRouteError` with only safe fields: `provider`, `model`, and `routesTried`.
 
+When every configured route fails with model access/not-found style errors (for example `UPSTREAM_ERROR` + `NOT_FOUND`, `FORBIDDEN`, `403`, `404`), the error message is explicit: `Model access denied or not found (404) across all configured provider/model routes.`
+
 ## Edge-Case Checklist
 
 - Last provider memory: `withRetry()` stores the last successful route per requested `provider + model` and prefers it on future calls (same process).
 - All keys exhausted in one provider/model route: the wrapper automatically continues to the next allowed fallback route.
 - Provider accidentally blacklisted/blocked: route-level blacklist/blocked/403-forbidden patterns are treated as fallback-safe and move to another route.
+- All providers route-fail with access/not-found: returns a clear `Model access denied or not found (404)` message via `ProviderRouteError`.
 - Cooldown heap lifecycle: `rateLimited()` pushes keys into the cooldown min-heap by `resetAt`, and `acquire()` releases expired cooldowns before selection.
 - Key state continuity: with `FileStateAdapter`, non-secret `lastUsedAt`, `resetAt`, and health counters are restored on restart; expired cooldowns are released on first acquire.
 
@@ -793,7 +796,7 @@ import {
 
 - Route affinity memory: remembers and prefers the last successful fallback route per requested provider/model.
 - Blacklisted/blocked provider route detection added to default fallback-safe route handling.
-- Added retry-wrapper tests for route-memory preference, blacklisted route fallback, and exhausted-route fallback progression.
+- Added retry-wrapper tests for provider with keys route-memory preference, blacklisted route fallback, and exhausted-route fallback progression.
 
 ## Development
 

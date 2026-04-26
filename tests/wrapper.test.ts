@@ -265,6 +265,112 @@ describe("withKeyRetry", () => {
     expect(calls).toEqual(["google:gemini-3.0-flash", "openrouter:google/gemini-flash-1.5"]);
   });
 
+  it("with 2 google keys and 5 openrouter keys, route error on first google key jumps directly to openrouter", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [
+            { id: "google-a", value: "sk-google-a" },
+            { id: "google-b", value: "sk-google-b" }
+          ]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [
+            { id: "openrouter-a", value: "sk-openrouter-a" },
+            { id: "openrouter-b", value: "sk-openrouter-b" },
+            { id: "openrouter-c", value: "sk-openrouter-c" },
+            { id: "openrouter-d", value: "sk-openrouter-d" },
+            { id: "openrouter-e", value: "sk-openrouter-e" }
+          ]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    const attempts: string[] = [];
+    const result = await scheduler.withStreamRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      execute: async ({ provider, key }) => {
+        attempts.push(`${provider}:${key.id}`);
+        if (provider === "google") {
+          throw new Error(
+            'event: error\\ndata: {"success":false,"message":"Stream failed","data":null,"error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods., Status: NOT_FOUND, Details: []"}}'
+          );
+        }
+
+        return { provider, keyId: key.id };
+      }
+    });
+
+    expect(result).toEqual({ provider: "openrouter", keyId: "openrouter-a" });
+    expect(attempts).toEqual(["google:google-a", "openrouter:openrouter-a"]);
+  });
+
+  it("updates route memory as soon as fallback is chosen, then starts next request on that provider", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [
+            { id: "google-a", value: "sk-google-a" },
+            { id: "google-b", value: "sk-google-b" }
+          ]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [
+            { id: "openrouter-a", value: "sk-openrouter-a" },
+            { id: "openrouter-b", value: "sk-openrouter-b" },
+            { id: "openrouter-c", value: "sk-openrouter-c" },
+            { id: "openrouter-d", value: "sk-openrouter-d" },
+            { id: "openrouter-e", value: "sk-openrouter-e" }
+          ]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    await expect(
+      scheduler.withRetry({
+        provider: "google",
+        model: "gemini-3.0-flash",
+        execute: async ({ provider }) => {
+          if (provider === "google") {
+            throw new Error(
+              'event: error\\ndata: {"success":false,"message":"Stream failed","data":null,"error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods., Status: NOT_FOUND, Details: []"}}'
+            );
+          }
+
+          throw new Error("openrouter temporary failure");
+        }
+      })
+    ).rejects.toThrow("openrouter temporary failure");
+
+    const nextRequestRoutes: string[] = [];
+    const second = await scheduler.withRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      execute: async ({ provider, model }) => {
+        nextRequestRoutes.push(`${provider}:${model}`);
+        return "ok";
+      }
+    });
+
+    expect(second).toBe("ok");
+    expect(nextRequestRoutes).toEqual(["openrouter:google/gemini-flash-1.5"]);
+  });
+
   it("progresses across three providers: route error, then exhausted keys, then success", async () => {
     const scheduler = new KeyScheduler({
       providers: [
@@ -320,6 +426,48 @@ describe("withKeyRetry", () => {
       "openrouter:google/gemini-flash-1.5",
       "vercel-ai-gateway:anthropic/claude-sonnet-4.6"
     ]);
+  });
+
+  it("returns clear access/not-found error when all provider routes fail with model route errors", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    const promise = scheduler.withRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      execute: async ({ provider }) => {
+        if (provider === "google") {
+          throw new Error(
+            'event: error\\ndata: {"success":false,"message":"Stream failed","data":null,"error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods., Status: NOT_FOUND, Details: []"}}'
+          );
+        }
+
+        const error = new Error("provider access denied for this model");
+        Object.assign(error, { status: 403, code: "FORBIDDEN" });
+        throw error;
+      }
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      name: "ProviderRouteError",
+      routesTried: 2
+    });
+    await expect(promise).rejects.toThrow("Model access denied or not found (404)");
   });
 
   it("can disable provider/model fallback for route errors", async () => {
