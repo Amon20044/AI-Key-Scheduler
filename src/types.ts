@@ -90,6 +90,21 @@ export interface KeyRetryEvent {
   errorStatus?: number;
 }
 
+export interface KeyFallbackEvent {
+  fromProvider: string;
+  fromModel: string;
+  toProvider: string;
+  toModel: string;
+  attempt: number;
+  maxAttempts: number;
+  remainingMs: number;
+  errorName?: string;
+  errorCode?: string | number;
+  errorStatus?: number;
+}
+
+export type KeyFallbackConfig = "all" | false | AcquireRequest[];
+
 export interface WithKeyRetryOptions<T> extends AcquireRequest {
   execute(context: KeyExecutionContext): Promise<T>;
   /**
@@ -106,13 +121,20 @@ export interface WithKeyRetryOptions<T> extends AcquireRequest {
   sleep?: (ms: number) => Promise<void>;
   signal?: AbortSignal;
   /**
+   * Defaults to "all": model/route errors can fall back to other configured
+   * provider/model groups. Set false to disable.
+   */
+  fallbacks?: KeyFallbackConfig;
+  /**
    * Adds custom retry classification on top of the built-in 429/quota/exhausted
    * detector. Return true to force a retry.
    */
   isRetryableError?: (error: unknown) => boolean;
+  isFallbackError?: (error: unknown) => boolean;
   classifyError?: (error: unknown) => "retry" | "fail" | undefined;
   getRetryAfter?: (error: unknown) => string | number | Date | null | undefined;
   onRetry?: (event: KeyRetryEvent) => void | Promise<void>;
+  onFallback?: (event: KeyFallbackEvent) => void | Promise<void>;
 }
 
 export interface PersistedKeyState {

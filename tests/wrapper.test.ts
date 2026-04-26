@@ -9,7 +9,9 @@ import {
   KeyExhaustedError,
   KeyScheduler,
   MemoryStateAdapter,
+  ProviderRouteError,
   RetryAbortedError,
+  isFallbackRouteError,
   withStreamKeyRetry,
   withKeyRetry
 } from "../src/index.js";
@@ -34,6 +36,235 @@ function schedulerWithThreeKeys(now: () => number = Date.now): KeyScheduler {
 }
 
 describe("withKeyRetry", () => {
+  it("falls back to another configured provider/model for upstream model route errors", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+    const events: unknown[] = [];
+
+    const result = await scheduler.withRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      onFallback: (event) => {
+        events.push(event);
+      },
+      execute: async ({ provider, model, apiKey }) => {
+        if (provider === "google") {
+          throw new Error(
+            'event: error\ndata: {"success":false,"message":"Stream failed","error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent., Status: NOT_FOUND"}}'
+          );
+        }
+
+        return { provider, model, apiKey };
+      }
+    });
+
+    expect(result).toEqual({
+      provider: "openrouter",
+      model: "google/gemini-flash-1.5",
+      apiKey: "sk-openrouter-a"
+    });
+    expect(JSON.stringify(events)).not.toContain("gemini-3.0-flash is not found");
+    expect(events).toMatchObject([
+      {
+        fromProvider: "google",
+        fromModel: "gemini-3.0-flash",
+        toProvider: "openrouter",
+        toModel: "google/gemini-flash-1.5"
+      }
+    ]);
+  });
+
+  it("remembers the last successful fallback route and prefers it on the next call", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    const firstCallRoutes: string[] = [];
+    await scheduler.withRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      execute: async ({ provider, model }) => {
+        firstCallRoutes.push(`${provider}/${model}`);
+        if (provider === "google") {
+          throw new Error(
+            'event: error\\ndata: {"error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent., Status: NOT_FOUND"}}'
+          );
+        }
+
+        return `${provider}/${model}`;
+      }
+    });
+
+    expect(firstCallRoutes).toEqual(["google/gemini-3.0-flash", "openrouter/google/gemini-flash-1.5"]);
+
+    const secondCallRoutes: string[] = [];
+    const second = await scheduler.withRetry({
+      provider: "google",
+      model: "gemini-3.0-flash",
+      execute: async ({ provider, model }) => {
+        secondCallRoutes.push(`${provider}/${model}`);
+        if (provider === "google") {
+          throw new Error("UPSTREAM_ERROR 404 model is not found");
+        }
+
+        return `${provider}/${model}`;
+      }
+    });
+
+    expect(second).toBe("openrouter/google/gemini-flash-1.5");
+    expect(secondCallRoutes).toEqual(["openrouter/google/gemini-flash-1.5"]);
+  });
+
+  it("moves to another provider/model when all keys in the first route are exhausted", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-2.5-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    const calls: string[] = [];
+    const result = await scheduler.withRetry({
+      provider: "google",
+      model: "gemini-2.5-flash",
+      execute: async ({ provider, model }) => {
+        calls.push(`${provider}:${model}`);
+        if (provider === "google") {
+          throw new Error("429 rate limit exhausted for this key");
+        }
+
+        return { provider, model };
+      }
+    });
+
+    expect(result).toEqual({
+      provider: "openrouter",
+      model: "google/gemini-flash-1.5"
+    });
+    expect(calls).toEqual(["google:gemini-2.5-flash", "openrouter:google/gemini-flash-1.5"]);
+  });
+
+  it("falls back when the selected provider route is blacklisted", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-2.5-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    const result = await scheduler.withRetry({
+      provider: "google",
+      model: "gemini-2.5-flash",
+      execute: async ({ provider, model }) => {
+        if (provider === "google") {
+          const error = new Error("provider is blacklisted for this model (403 forbidden)");
+          Object.assign(error, { status: 403, code: "FORBIDDEN" });
+          throw error;
+        }
+
+        return { provider, model };
+      }
+    });
+
+    expect(result).toEqual({
+      provider: "openrouter",
+      model: "google/gemini-flash-1.5"
+    });
+  });
+
+  it("can disable provider/model fallback for route errors", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [
+        {
+          name: "google",
+          model: "gemini-3.0-flash",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "google-a", value: "sk-google-a" }]
+        },
+        {
+          name: "openrouter",
+          model: "google/gemini-flash-1.5",
+          defaultCooldownMs: 60_000,
+          keys: [{ id: "openrouter-a", value: "sk-openrouter-a" }]
+        }
+      ],
+      state: new MemoryStateAdapter()
+    });
+
+    await expect(
+      scheduler.withRetry({
+        provider: "google",
+        model: "gemini-3.0-flash",
+        fallbacks: false,
+        execute: async () => {
+          throw new Error("UPSTREAM_ERROR 404 model is not found");
+        }
+      })
+    ).rejects.toBeInstanceOf(ProviderRouteError);
+  });
+
+  it("detects model route errors from common SSE/provider payloads", () => {
+    expect(
+      isFallbackRouteError(
+        'event: error\ndata: {"error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent., Status: NOT_FOUND"}}'
+      )
+    ).toBe(true);
+    expect(isFallbackRouteError({ status: 404, response: { data: { error: { message: "model_not_found" } } } })).toBe(true);
+    expect(isFallbackRouteError({ status: 403, code: "FORBIDDEN", message: "provider blacklisted" })).toBe(true);
+    expect(isFallbackRouteError({ status: 500, message: "database failed" })).toBe(false);
+  });
+
   it("wraps any AI function and retries across keys for retryable 429 messages", async () => {
     const scheduler = schedulerWithThreeKeys();
     const seenKeys: string[] = [];

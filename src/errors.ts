@@ -38,6 +38,20 @@ export class ProviderNotFoundError extends Error {
   }
 }
 
+export class ProviderRouteError extends Error {
+  readonly provider: string;
+  readonly model: string;
+  readonly routesTried: number;
+
+  constructor(message: string, options: { provider: string; model: string; routesTried: number }) {
+    super(message);
+    this.name = "ProviderRouteError";
+    this.provider = options.provider;
+    this.model = options.model;
+    this.routesTried = options.routesTried;
+  }
+}
+
 export class NoAvailableKeyError extends Error {
   readonly provider: string;
   readonly model: string;

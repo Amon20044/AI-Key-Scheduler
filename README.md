@@ -33,6 +33,9 @@ What it does:
 - Provides `scheduler.withRetry()` / `withKeyRetry()` to wrap LangChain, Vercel AI SDK, or any custom generation function.
 - Retries retryable AI errors across the total number of keys configured for that provider/model.
 - Uses a 60 second default retry deadline and waits for cooling keys only when their reset is inside that deadline.
+- Falls back to other configured provider/model groups for route failures like UPSTREAM_ERROR, NOT_FOUND, model-not-found, or unsupported generateContent errors.
+- Remembers the last successful fallback route in-memory for each requested provider/model and prefers it on later calls.
+- Treats blacklisted or blocked route errors (for example provider-level 403/FORBIDDEN with blacklist/blocked signals) as fallback-safe.
 - Supports AbortSignal, SSE/start-stream startup retry, health-aware key tie-breaking, and optional HMAC key identity checks.
 - Persists only non-secret scheduling state if FileStateAdapter is used.
 - Keeps raw API keys local and wrapped in SecretString.
@@ -45,11 +48,12 @@ How to use it:
    `await scheduler.withRetry({ provider, model, execute, signal })`
 4. For SSE/start-stream calls, use:
    `await scheduler.withStreamRetry({ provider, model, execute, signal })`
-5. Inside `execute`, pass the key to the provider SDK using:
-   `apiKey`
-6. The wrapper automatically calls `success()`, `rateLimited()`, or `release()`.
-7. It treats 429, rate-limit, quota, and exhausted-key messages as retryable.
-8. It throws safe package errors when attempts, timeout, or abort stop the retry loop.
+5. Inside `execute`, pass the current route and key to the provider SDK using:
+   `provider`, `model`, and `apiKey`
+6. Keep fallback enabled for MVP-safe routing, or set `fallbacks: false` / an explicit fallback list for stricter production control.
+7. The wrapper automatically calls `success()`, `rateLimited()`, or `release()`.
+8. It treats 429, rate-limit, quota, and exhausted-key messages as retryable.
+9. It throws safe package errors when attempts, timeout, abort, or route fallback exhaustion stop the retry loop.
 
 Manual flow:
 1. Before calling the AI SDK, call:
@@ -76,8 +80,8 @@ const result = await scheduler.withRetry({
   provider: "openrouter",
   model,
   signal: abortController.signal,
-  execute: async ({ apiKey, signal }) => {
-    return callProvider({ apiKey, model, prompt, signal });
+  execute: async ({ apiKey, provider, model, signal }) => {
+    return callProvider({ apiKey, provider, model, prompt, signal });
   }
 });
 
@@ -152,11 +156,12 @@ const text = await scheduler.withRetry({
   provider: "openrouter",
   model,
   timeoutMs: 60_000,
-  execute: async ({ apiKey, key, attempt, maxAttempts, remainingMs, signal }) => {
+  execute: async ({ apiKey, provider, model, key, attempt, maxAttempts, remainingMs, signal }) => {
     // `apiKey` is the raw key. Use it only for the provider SDK call.
-    // `key.id`, `attempt`, `maxAttempts`, and `remainingMs` are safe for logs.
+    // `provider`, `model`, `key.id`, `attempt`, `maxAttempts`, and `remainingMs` are safe for logs.
     return generateContent({
       apiKey,
+      provider,
       model,
       prompt: "Write a short hello world.",
       signal
@@ -177,6 +182,8 @@ const text = await scheduler.withRetry({
 
 It retries up to the total number of keys configured for that exact `provider + model`. Non-rate-limit errors are released and rethrown immediately.
 
+If the selected provider/model route itself is broken, such as a provider returning `UPSTREAM_ERROR`, `NOT_FOUND`, `model_not_found`, or "not supported for generateContent", the wrapper can move to another configured provider/model group. In that case, `provider` and `model` in `execute` are the current route, not necessarily the original input.
+
 ## Wrap Any Provider Function
 
 AI Key Manager does not care which AI SDK you use. If your function accepts an API key, wrap it:
@@ -185,9 +192,11 @@ AI Key Manager does not care which AI SDK you use. If your function accepts an A
 const result = await scheduler.withRetry({
   provider: "google",
   model: "gemini-2.5-flash",
-  execute: async ({ apiKey, signal }) => {
+  execute: async ({ apiKey, provider, model, signal }) => {
     return generateWithAnySDK({
       apiKey,
+      provider,
+      model,
       prompt: "Summarize this document.",
       signal
     });
@@ -195,14 +204,16 @@ const result = await scheduler.withRetry({
 });
 ```
 
+Use the `provider` and `model` passed into `execute`. They represent the current route, so fallback can move from one configured group to another without your wrapper accidentally calling the old model.
+
 For streaming/SSE startup, use the stream alias:
 
 ```ts
 const stream = await scheduler.withStreamRetry({
   provider: "openrouter",
   model,
-  execute: async ({ apiKey, signal }) => {
-    return startProviderStream({ apiKey, model, prompt, signal });
+  execute: async ({ apiKey, provider, model, signal }) => {
+    return startProviderStream({ apiKey, provider, model, prompt, signal });
   }
 });
 ```
@@ -214,9 +225,70 @@ const stream = await scheduler.withStreamRetry({
 - **Key budget:** defaults to the total key count for the selected `provider + model`.
 - **Deadline:** defaults to `60_000ms`; override with `timeoutMs`.
 - **Cooldown wait:** if every key is cooling and the soonest reset is inside the deadline, the wrapper waits and retries.
+- **Route fallback:** if a provider/model route is broken, the wrapper can try another configured provider/model group.
+- **Route memory:** after a fallback success, later calls for the same requested route prefer the last successful route in this process.
+- **Blacklist-safe route handling:** provider blacklisted/blocked route failures are treated as fallback-safe and move to the next route.
 - **Safe failures:** if attempts or timeout are exhausted, it throws `KeyExhaustedError` with safe fields only.
 - **Abort:** pass `signal` to abort before acquire, before execute, or while waiting for cooldown.
 - **Custom classification:** use `classifyError(error)` to force `"retry"` or `"fail"` for provider-specific SDK errors.
+
+## Provider/Model Fallback
+
+Some AI gateways fail before generation starts because the requested provider/model route is invalid or unsupported. A common SSE error looks like this:
+
+```txt
+event: error
+data: {"success":false,"message":"Stream failed","error":{"code":"UPSTREAM_ERROR","details":"Error 404, Message: models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent., Status: NOT_FOUND"}}
+```
+
+By default, `withRetry()` and `withStreamRetry()` treat route failures as fallback-safe and try the next configured provider/model group. They detect common shapes including `UPSTREAM_ERROR`, `NOT_FOUND`, HTTP `404`, `model_not_found`, `models/... is not found`, `unsupported model`, and `not supported for generateContent`.
+
+They also treat common provider-blacklist/blocked route failures as fallback-safe (for example messages containing blacklist/blocked/provider-disabled semantics, including `403` + `FORBIDDEN` patterns from gateways).
+
+When fallback succeeds, the wrapper remembers that successful route for the requested `provider + model` and prefers it first on the next call in the same process, which avoids repeatedly probing a known-bad route.
+
+```ts
+const response = await scheduler.withRetry({
+  provider: "google",
+  model: "gemini-3.0-flash",
+  execute: async ({ apiKey, provider, model, signal }) => {
+    return generateWithRoute({ apiKey, provider, model, prompt, signal });
+  }
+});
+```
+
+For stricter control, disable fallback or provide an ordered list:
+
+```ts
+await scheduler.withRetry({
+  provider: "google",
+  model: "gemini-3.0-flash",
+  fallbacks: [
+    { provider: "openrouter", model: "google/gemini-flash-1.5" },
+    { provider: "vercel-ai-gateway", model: "anthropic/claude-sonnet-4.6" }
+  ],
+  execute: async ({ apiKey, provider, model }) => {
+    return generateWithRoute({ apiKey, provider, model, prompt });
+  }
+});
+
+await scheduler.withRetry({
+  provider: "google",
+  model: "gemini-3.0-flash",
+  fallbacks: false,
+  execute
+});
+```
+
+If every route fails before generation starts, the wrapper throws `ProviderRouteError` with only safe fields: `provider`, `model`, and `routesTried`.
+
+## Edge-Case Checklist
+
+- Last provider memory: `withRetry()` stores the last successful route per requested `provider + model` and prefers it on future calls (same process).
+- All keys exhausted in one provider/model route: the wrapper automatically continues to the next allowed fallback route.
+- Provider accidentally blacklisted/blocked: route-level blacklist/blocked/403-forbidden patterns are treated as fallback-safe and move to another route.
+- Cooldown heap lifecycle: `rateLimited()` pushes keys into the cooldown min-heap by `resetAt`, and `acquire()` releases expired cooldowns before selection.
+- Key state continuity: with `FileStateAdapter`, non-secret `lastUsedAt`, `resetAt`, and health counters are restored on restart; expired cooldowns are released on first acquire.
 
 ## Key Identity Safety
 
@@ -512,6 +584,8 @@ Available keys are chosen with greedy LRU selection using `lastUsedAt`. Rate-lim
 
 Inside one Node.js process, acquire and lease settlement calls are serialized so two concurrent requests do not receive the same key.
 
+`withRetry()` additionally keeps in-memory route affinity for each requested route so fallback wins can be reused on later calls.
+
 ## LangChain JS Example
 
 Install:
@@ -715,6 +789,12 @@ import {
 - Simple per-key health score for smarter tie-breaking.
 - Optional HMAC key identity checks to detect swapped environment keys after restart.
 
+### v0.2.2
+
+- Route affinity memory: remembers and prefers the last successful fallback route per requested provider/model.
+- Blacklisted/blocked provider route detection added to default fallback-safe route handling.
+- Added retry-wrapper tests for route-memory preference, blacklisted route fallback, and exhausted-route fallback progression.
+
 ## Development
 
 ```sh
@@ -724,6 +804,17 @@ npm run test:security
 npm test
 npm run typecheck
 npm run build
+```
+
+Track build/test logs in PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Path logs -Force | Out-Null
+npm run lint 2>&1 | Tee-Object logs/lint.log
+npm run test:security 2>&1 | Tee-Object logs/test-security.log
+npm test 2>&1 | Tee-Object logs/test.log
+npm run typecheck 2>&1 | Tee-Object logs/typecheck.log
+npm run build 2>&1 | Tee-Object logs/build.log
 ```
 
 Build output includes ESM, CJS, and TypeScript declarations under `dist/`.

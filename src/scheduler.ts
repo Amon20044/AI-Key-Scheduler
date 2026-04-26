@@ -103,6 +103,14 @@ export class KeyScheduler {
     };
   }
 
+  listGroups(): KeyGroupInfo[] {
+    return [...this.groups.values()].map((group) => ({
+      provider: group.provider.name,
+      model: group.provider.model,
+      totalKeys: group.keysById.size
+    }));
+  }
+
   async withRetry<T>(options: WithKeyRetryOptions<T>): Promise<T> {
     return withKeyRetry(this, options);
   }

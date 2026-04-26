@@ -1,126 +1,168 @@
-import { isRateLimitError, KeyExhaustedError, NoAvailableKeyError, RetryAbortedError } from "./errors.js";
+import { isRateLimitError, KeyExhaustedError, NoAvailableKeyError, ProviderRouteError, RetryAbortedError } from "./errors.js";
 import type { KeyScheduler } from "./scheduler.js";
-import type { KeyRetryEvent, WithKeyRetryOptions } from "./types.js";
+import type { AcquireRequest, KeyFallbackEvent, KeyRetryEvent, WithKeyRetryOptions } from "./types.js";
 
 export const DEFAULT_RETRY_TIMEOUT_MS = 60_000;
 export const DEFAULT_RETRY_POLL_INTERVAL_MS = 50;
 const RETRYABLE_ERROR_PATTERN =
   /\b429\b|rate[\s_-]?limit|too many requests|quota|exhausted|resource[\s_-]?exhausted|key[\s_-]?exhausted|insufficient[\s_-]?quota|quota[\s_-]?exceeded/i;
+const FALLBACK_ERROR_PATTERN =
+  /upstream[\s_-]?error|not[\s_-]?found|model[\s\S]{0,80}not[\s_-]?found|not supported for generatecontent|unsupported model|model_not_found|not_supported|provider[\s_-]?(?:blacklist(?:ed)?|blocked|banned|disabled)|blacklist(?:ed)?|403[\s\S]{0,20}(?:forbidden|blacklist(?:ed)?|blocked)|404/i;
+const routeAffinityByScheduler = new WeakMap<KeyScheduler, Map<string, AcquireRequest>>();
 
 export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): Promise<T> {
-  const maxAttempts = options.maxAttempts ?? scheduler.getKeyCount({ provider: options.provider, model: options.model });
   const timeoutMs = options.timeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_RETRY_POLL_INTERVAL_MS;
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
   const startedAt = now();
   const deadline = startedAt + timeoutMs;
+  const routes = buildRoutes(scheduler, options);
+  let lastExhaustedError: KeyExhaustedError | undefined;
 
-  if (maxAttempts <= 0) {
-    throw new NoAvailableKeyError(`No retry attempts available for provider "${options.provider}" and model "${options.model}".`, {
-      provider: options.provider,
-      model: options.model
-    });
-  }
-
-  let lastRetryableKeyId: string | undefined;
-  let attempts = 0;
-
-  while (attempts < maxAttempts) {
-    throwIfAborted(options, attempts, maxAttempts);
-
-    if (isTimedOut(now(), deadline)) {
-      throw exhaustedError(options, {
-        keyId: lastRetryableKeyId,
-        reason: "timeout",
-        attempts,
-        maxAttempts,
-        timeoutMs
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route = routes[routeIndex];
+    const maxAttempts = options.maxAttempts ?? scheduler.getKeyCount(route);
+    if (maxAttempts <= 0) {
+      throw new NoAvailableKeyError(`No retry attempts available for provider "${route.provider}" and model "${route.model}".`, {
+        provider: route.provider,
+        model: route.model
       });
     }
 
-    let lease;
-    try {
-      throwIfAborted(options, attempts, maxAttempts);
-      lease = await scheduler.acquire({ provider: options.provider, model: options.model });
-    } catch (error) {
-      if (error instanceof NoAvailableKeyError) {
-        await waitForAvailability({
-          error,
-          provider: options.provider,
-          model: options.model,
+    let lastRetryableKeyId: string | undefined;
+    let attempts = 0;
+
+    let movedToFallback = false;
+
+    while (attempts < maxAttempts) {
+      throwIfAborted({ ...options, ...route }, attempts, maxAttempts);
+
+      if (isTimedOut(now(), deadline)) {
+        throw exhaustedError(route, {
           keyId: lastRetryableKeyId,
+          reason: "timeout",
           attempts,
           maxAttempts,
-          timeoutMs,
-          pollIntervalMs,
-          now,
-          deadline,
-          sleep,
-          signal: options.signal
+          timeoutMs
         });
-        continue;
-      }
-      throw error;
-    }
-
-    attempts += 1;
-    const attempt = attempts;
-
-    try {
-      if (options.signal?.aborted) {
-        await lease.release();
-        throw abortedError({ provider: options.provider, model: options.model, attempts: attempts - 1, maxAttempts });
-      }
-      const result = await options.execute({
-        key: lease.key,
-        apiKey: lease.key.secret.value(),
-        lease,
-        provider: options.provider,
-        model: options.model,
-        attempt,
-        maxAttempts,
-        remainingMs: Math.max(0, deadline - now()),
-        signal: options.signal
-      });
-      await lease.success();
-      return result;
-    } catch (error) {
-      if (options.signal?.aborted) {
-        await lease.release();
-        throw abortedError({ provider: options.provider, model: options.model, attempts, maxAttempts });
       }
 
-      const classification = classifyKeyError(error, options);
-      if (classification === "retry") {
-        lastRetryableKeyId = lease.key.id;
-        const retryAfter = options.getRetryAfter?.(error) ?? extractRetryAfter(error);
-        await lease.rateLimited({ retryAfter });
-        await options.onRetry?.({
-          keyId: lease.key.id,
-          provider: options.provider,
-          model: options.model,
+      let lease;
+      try {
+        throwIfAborted({ ...options, ...route }, attempts, maxAttempts);
+        lease = await scheduler.acquire(route);
+      } catch (error) {
+        if (error instanceof NoAvailableKeyError) {
+          await waitForAvailability({
+            error,
+            provider: route.provider,
+            model: route.model,
+            keyId: lastRetryableKeyId,
+            attempts,
+            maxAttempts,
+            timeoutMs,
+            pollIntervalMs,
+            now,
+            deadline,
+            sleep,
+            signal: options.signal
+          });
+          continue;
+        }
+        throw error;
+      }
+
+      attempts += 1;
+      const attempt = attempts;
+
+      try {
+        if (options.signal?.aborted) {
+          await lease.release();
+          throw abortedError({ provider: route.provider, model: route.model, attempts: attempts - 1, maxAttempts });
+        }
+        const result = await options.execute({
+          key: lease.key,
+          apiKey: lease.key.secret.value(),
+          lease,
+          provider: route.provider,
+          model: route.model,
           attempt,
           maxAttempts,
           remainingMs: Math.max(0, deadline - now()),
-          retryAfter,
-          ...safeErrorFields(error)
+          signal: options.signal
         });
-        continue;
-      }
+        await lease.success();
+        rememberRouteAffinity(scheduler, options, route);
+        return result;
+      } catch (error) {
+        if (options.signal?.aborted) {
+          await lease.release();
+          throw abortedError({ provider: route.provider, model: route.model, attempts, maxAttempts });
+        }
 
-      await lease.release();
-      throw error;
+        if (isFallbackRouteError(error, options)) {
+          await lease.release();
+          clearRouteAffinityIfFailed(scheduler, options, route);
+          if (routeIndex >= routes.length - 1) {
+            throw new ProviderRouteError(`Provider/model route failed for provider "${route.provider}" and model "${route.model}".`, {
+              provider: route.provider,
+              model: route.model,
+              routesTried: routes.length
+            });
+          }
+
+          await options.onFallback?.({
+            fromProvider: route.provider,
+            fromModel: route.model,
+            toProvider: routes[routeIndex + 1].provider,
+            toModel: routes[routeIndex + 1].model,
+            attempt,
+            maxAttempts,
+            remainingMs: Math.max(0, deadline - now()),
+            ...safeErrorFields(error)
+          });
+          movedToFallback = true;
+          break;
+        }
+
+        const classification = classifyKeyError(error, options);
+        if (classification === "retry") {
+          lastRetryableKeyId = lease.key.id;
+          const retryAfter = options.getRetryAfter?.(error) ?? extractRetryAfter(error);
+          await lease.rateLimited({ retryAfter });
+          await options.onRetry?.({
+            keyId: lease.key.id,
+            provider: route.provider,
+            model: route.model,
+            attempt,
+            maxAttempts,
+            remainingMs: Math.max(0, deadline - now()),
+            retryAfter,
+            ...safeErrorFields(error)
+          });
+          continue;
+        }
+
+        await lease.release();
+        throw error;
+      }
     }
+
+    if (movedToFallback) {
+      continue;
+    }
+
+    lastExhaustedError = exhaustedError(route, {
+      keyId: lastRetryableKeyId,
+      reason: "max_attempts",
+      attempts,
+      maxAttempts,
+      timeoutMs
+    });
   }
 
-  throw exhaustedError(options, {
-    keyId: lastRetryableKeyId,
-    reason: "max_attempts",
-    attempts,
-    maxAttempts,
-    timeoutMs
-  });
+  throw lastExhaustedError ?? exhaustedError(options, { reason: "no_available_key", attempts: 0, maxAttempts: 0, timeoutMs });
 }
 
 export async function withStreamKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): Promise<T> {
@@ -149,6 +191,35 @@ export function isRetryableKeyError(error: unknown, custom?: (error: unknown) =>
   return RETRYABLE_ERROR_PATTERN.test(collectErrorText(error));
 }
 
+export function isFallbackRouteError(error: unknown, options: Pick<WithKeyRetryOptions<unknown>, "isFallbackError"> = {}): boolean {
+  if (options.isFallbackError?.(error)) {
+    return true;
+  }
+
+  if (!error || typeof error !== "object") {
+    return FALLBACK_ERROR_PATTERN.test(String(error));
+  }
+
+  const maybeError = error as { status?: unknown; statusCode?: unknown; code?: unknown };
+  const status = maybeError.status ?? maybeError.statusCode;
+  const code = typeof maybeError.code === "string" ? maybeError.code.toUpperCase() : undefined;
+  const text = collectErrorText(error);
+
+  if (
+    code === "UPSTREAM_ERROR" ||
+    code === "NOT_FOUND" ||
+    code === "MODEL_NOT_FOUND" ||
+    code === "FORBIDDEN" ||
+    code === "PROVIDER_BLACKLISTED" ||
+    code === "BLACKLISTED_PROVIDER" ||
+    code === "PROVIDER_BLOCKED"
+  ) {
+    return FALLBACK_ERROR_PATTERN.test(text);
+  }
+
+  return (status === 404 || status === 403 || code === undefined) && FALLBACK_ERROR_PATTERN.test(text);
+}
+
 function classifyKeyError<T>(error: unknown, options: WithKeyRetryOptions<T>): "retry" | "fail" {
   const customClassification = options.classifyError?.(error);
   if (customClassification === "retry" || customClassification === "fail") {
@@ -156,6 +227,107 @@ function classifyKeyError<T>(error: unknown, options: WithKeyRetryOptions<T>): "
   }
 
   return isRetryableKeyError(error, options.isRetryableError) ? "retry" : "fail";
+}
+
+function buildRoutes<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): AcquireRequest[] {
+  const routes: AcquireRequest[] = [];
+  const requestedRoute = toAcquireRequest(options);
+
+  const addRoute = (route: AcquireRequest) => {
+    if (!routes.some((candidate) => candidate.provider === route.provider && candidate.model === route.model)) {
+      routes.push({ provider: route.provider, model: route.model });
+    }
+  };
+
+  if (options.fallbacks === false) {
+    addRoute(requestedRoute);
+    return routes;
+  }
+
+  const fallbackRoutes: AcquireRequest[] =
+    options.fallbacks === undefined || options.fallbacks === "all"
+      ? scheduler.listGroups().map((route) => toAcquireRequest(route))
+      : options.fallbacks;
+
+  const preferredRoute = getPreferredRoute(scheduler, requestedRoute);
+  if (preferredRoute && isAllowedRoute(preferredRoute, requestedRoute, fallbackRoutes)) {
+    addRoute(preferredRoute);
+  }
+
+  addRoute(requestedRoute);
+
+  for (const route of fallbackRoutes) {
+    addRoute(route);
+  }
+
+  return routes;
+}
+
+function toAcquireRequest(input: { provider: string; model: string }): AcquireRequest {
+  return {
+    provider: input.provider,
+    model: input.model
+  };
+}
+
+function routeKey(route: AcquireRequest): string {
+  return `${route.provider}\u0000${route.model}`;
+}
+
+function sameRoute(left: AcquireRequest, right: AcquireRequest): boolean {
+  return left.provider === right.provider && left.model === right.model;
+}
+
+function isAllowedRoute(route: AcquireRequest, requestedRoute: AcquireRequest, fallbackRoutes: AcquireRequest[]): boolean {
+  return sameRoute(route, requestedRoute) || fallbackRoutes.some((candidate) => sameRoute(route, candidate));
+}
+
+function getAffinityStore(scheduler: KeyScheduler): Map<string, AcquireRequest> {
+  const existing = routeAffinityByScheduler.get(scheduler);
+  if (existing) {
+    return existing;
+  }
+
+  const created = new Map<string, AcquireRequest>();
+  routeAffinityByScheduler.set(scheduler, created);
+  return created;
+}
+
+function getPreferredRoute(scheduler: KeyScheduler, requestedRoute: AcquireRequest): AcquireRequest | undefined {
+  const store = routeAffinityByScheduler.get(scheduler);
+  if (!store) {
+    return undefined;
+  }
+
+  const preferredRoute = store.get(routeKey(requestedRoute));
+  if (!preferredRoute) {
+    return undefined;
+  }
+
+  const configured = scheduler.listGroups().some((candidate) => sameRoute(candidate, preferredRoute));
+  if (configured) {
+    return preferredRoute;
+  }
+
+  store.delete(routeKey(requestedRoute));
+  return undefined;
+}
+
+function rememberRouteAffinity(scheduler: KeyScheduler, requestedRoute: AcquireRequest, successfulRoute: AcquireRequest): void {
+  getAffinityStore(scheduler).set(routeKey(requestedRoute), toAcquireRequest(successfulRoute));
+}
+
+function clearRouteAffinityIfFailed(scheduler: KeyScheduler, requestedRoute: AcquireRequest, failedRoute: AcquireRequest): void {
+  const store = routeAffinityByScheduler.get(scheduler);
+  if (!store) {
+    return;
+  }
+
+  const key = routeKey(requestedRoute);
+  const preferredRoute = store.get(key);
+  if (preferredRoute && sameRoute(preferredRoute, failedRoute)) {
+    store.delete(key);
+  }
 }
 
 export function extractRetryAfter(error: unknown): string | number | Date | null | undefined {
