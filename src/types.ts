@@ -36,6 +36,10 @@ export interface AcquireRequest {
   model: string;
 }
 
+export interface KeyGroupInfo extends AcquireRequest {
+  totalKeys: number;
+}
+
 export interface RateLimitedOptions {
   retryAfter?: string | number | Date | null;
   cooldownMs?: number;
@@ -48,6 +52,34 @@ export interface KeyLease {
   success(): Promise<void>;
   release(): Promise<void>;
   rateLimited(options?: RateLimitedOptions): Promise<void>;
+}
+
+export interface KeyExecutionContext {
+  key: APIKey;
+  apiKey: string;
+  lease: KeyLease;
+  provider: string;
+  model: string;
+  attempt: number;
+  maxAttempts: number;
+}
+
+export interface KeyRetryEvent {
+  keyId: string;
+  provider: string;
+  model: string;
+  attempt: number;
+  maxAttempts: number;
+  retryAfter?: string | number | Date | null;
+  error: unknown;
+}
+
+export interface WithKeyRetryOptions<T> extends AcquireRequest {
+  execute(context: KeyExecutionContext): Promise<T>;
+  maxAttempts?: number;
+  isRetryableError?: (error: unknown) => boolean;
+  getRetryAfter?: (error: unknown) => string | number | Date | null | undefined;
+  onRetry?: (event: KeyRetryEvent) => void | Promise<void>;
 }
 
 export interface PersistedKeyState {

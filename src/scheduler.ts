@@ -3,17 +3,20 @@ import { NoAvailableKeyError, ProviderNotFoundError, SchedulerConfigurationError
 import { MinHeap } from "./heap.js";
 import { parseRetryAfter } from "./retryAfter.js";
 import { isSecretString, SecretString } from "./secret.js";
+import { withKeyRetry } from "./wrapper.js";
 import type {
   AcquireRequest,
   APIKey,
   KeyConfig,
+  KeyGroupInfo,
   KeyLease,
   PersistedKeyState,
   PersistedSchedulerState,
   ProviderConfig,
   RateLimitedOptions,
   SchedulerOptions,
-  StateAdapter
+  StateAdapter,
+  WithKeyRetryOptions
 } from "./types.js";
 
 interface RuntimeKey {
@@ -75,6 +78,23 @@ export class KeyScheduler {
       group.availableIds.delete(selected.apiKey.id);
       return this.createLease(selected);
     });
+  }
+
+  getKeyCount(request: AcquireRequest): number {
+    const group = this.getGroup(request.provider, request.model);
+    return group.keysById.size;
+  }
+
+  getGroupInfo(request: AcquireRequest): KeyGroupInfo {
+    return {
+      provider: request.provider,
+      model: request.model,
+      totalKeys: this.getKeyCount(request)
+    };
+  }
+
+  async withRetry<T>(options: WithKeyRetryOptions<T>): Promise<T> {
+    return withKeyRetry(this, options);
   }
 
   private configure(providers: ProviderConfig[]): void {

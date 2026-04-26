@@ -30,6 +30,8 @@ What it does:
 - Selects the least recently used available key.
 - Moves rate-limited keys into cooldown.
 - Uses Retry-After when available; otherwise uses the provider default cooldown.
+- Provides `scheduler.withRetry()` / `withKeyRetry()` to wrap LangChain, Vercel AI SDK, or any custom generation function.
+- Retries retryable AI errors across the total number of keys configured for that provider/model.
 - Persists only non-secret scheduling state if FileStateAdapter is used.
 - Keeps raw API keys local and wrapped in SecretString.
 - Makes no telemetry or external network calls by itself.
@@ -37,15 +39,23 @@ What it does:
 How to use it:
 1. Import `KeyScheduler`, `FileStateAdapter` or `MemoryStateAdapter`, and `isRateLimitError` from `ai-key-manager`.
 2. Configure providers with stable key IDs and API key values from environment variables.
-3. Before calling the AI SDK, call:
+3. Prefer wrapping AI calls with:
+   `await scheduler.withRetry({ provider, model, execute })`
+4. Inside `execute`, pass the key to the provider SDK using:
+   `apiKey`
+5. The wrapper automatically calls `success()`, `rateLimited()`, or `release()`.
+6. It treats 429, rate-limit, quota, and exhausted-key messages as retryable.
+
+Manual flow:
+1. Before calling the AI SDK, call:
    `const lease = await scheduler.acquire({ provider, model })`
-4. Pass the real key to the provider SDK using:
+2. Pass the real key to the provider SDK using:
    `lease.key.secret.value()`
-5. If the provider request succeeds, call:
+3. If the provider request succeeds, call:
    `await lease.success()`
-6. If the provider returns a rate-limit error, call:
+4. If the provider returns a rate-limit error, call:
    `await lease.rateLimited({ retryAfter })`
-7. For any other error, call:
+5. For any other error, call:
    `await lease.release()`
 
 Security rules:
@@ -55,7 +65,17 @@ Security rules:
 - Do not persist raw API key values.
 - Do not send keys, prompts, responses, headers, or metadata to any service except the provider SDK call the user explicitly requested.
 
-Minimal pattern:
+Preferred wrapper pattern:
+
+const result = await scheduler.withRetry({
+  provider: "openrouter",
+  model,
+  execute: async ({ apiKey }) => {
+    return callProvider({ apiKey, model, prompt });
+  }
+});
+
+Manual pattern:
 
 const lease = await scheduler.acquire({ provider: "openrouter", model });
 
@@ -94,7 +114,62 @@ try {
 npm install ai-key-manager
 ```
 
-## Quick Start
+## Preferred: Wrap Any AI Call With Retry
+
+Use `scheduler.withRetry()` when you want the package to handle acquire/success/rate-limit/release for you.
+
+```ts
+import {
+  FileStateAdapter,
+  KeyScheduler
+} from "ai-key-manager";
+
+const model = "google/gemma-4-26b-a4b-it:free";
+
+const scheduler = new KeyScheduler({
+  providers: [
+    {
+      name: "openrouter",
+      model,
+      defaultCooldownMs: 60_000,
+      keys: [
+        { id: "openrouter-a7f3", value: process.env.OPENROUTER_API_KEY_A7F3 },
+        { id: "openrouter-k2m9", value: process.env.OPENROUTER_API_KEY_K2M9 },
+        { id: "openrouter-q4x8", value: process.env.OPENROUTER_API_KEY_Q4X8 }
+      ]
+    }
+  ],
+  state: new FileStateAdapter(".llm-key-state.json")
+});
+
+const text = await scheduler.withRetry({
+  provider: "openrouter",
+  model,
+  execute: async ({ apiKey, key, attempt, maxAttempts }) => {
+    // `apiKey` is the raw key. Use it only for the provider SDK call.
+    // `key.id`, `attempt`, and `maxAttempts` are safe for logs.
+    return generateContent({
+      apiKey,
+      model,
+      prompt: "Write a short hello world."
+    });
+  }
+});
+```
+
+`withRetry()` retries only retryable key/provider failures. By default it treats these as retryable:
+
+- HTTP status `429`
+- `rate_limit_exceeded`
+- messages containing `429`
+- messages containing `rate limit`
+- messages containing `too many requests`
+- messages containing `quota`
+- messages containing `exhausted`
+
+It retries up to the total number of keys configured for that exact `provider + model`. Non-rate-limit errors are released and rethrown immediately.
+
+## Manual Lease Flow
 
 ```ts
 import {
@@ -163,6 +238,81 @@ try {
 
   throw error;
 }
+```
+
+## Wrapper Examples
+
+### LangChain JS
+
+```ts
+import { ChatOpenAI } from "@langchain/openai";
+import { KeyScheduler } from "ai-key-manager";
+
+const model = "openai/gpt-4o-mini";
+
+export async function askWithLangChain(scheduler: KeyScheduler, prompt: string) {
+  return scheduler.withRetry({
+    provider: "openrouter",
+    model,
+    execute: async ({ apiKey }) => {
+      const llm = new ChatOpenAI({
+        model,
+        apiKey,
+        configuration: {
+          baseURL: "https://openrouter.ai/api/v1"
+        }
+      });
+
+      return llm.invoke(prompt);
+    }
+  });
+}
+```
+
+### Vercel AI SDK
+
+```ts
+import { generateText } from "ai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { KeyScheduler } from "ai-key-manager";
+
+const model = "anthropic/claude-sonnet-4.6";
+
+export async function askWithVercelAI(scheduler: KeyScheduler, prompt: string) {
+  return scheduler.withRetry({
+    provider: "vercel-ai-gateway",
+    model,
+    execute: async ({ apiKey }) => {
+      const gateway = createOpenAICompatible({
+        name: "vercel-ai-gateway",
+        apiKey,
+        baseURL: "https://ai-gateway.vercel.sh/v1"
+      });
+
+      const result = await generateText({
+        model: gateway(model),
+        prompt
+      });
+
+      return result.text;
+    }
+  });
+}
+```
+
+### Any Env-Based Function
+
+```ts
+const result = await scheduler.withRetry({
+  provider: "google",
+  model: "gemini-2.5-flash",
+  execute: async ({ apiKey }) => {
+    return generateWithYourSDK({
+      apiKey,
+      prompt: "Summarize this document."
+    });
+  }
+});
 ```
 
 ## What You Input
