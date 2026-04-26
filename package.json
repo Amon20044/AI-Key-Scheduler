@@ -1,0 +1,55 @@
+{
+  "name": "ai-key-manager",
+  "version": "0.1.0",
+  "description": "AI Key Manager: rate-limit aware API key scheduling across providers and models.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Amon20044/AI-Key-Scheduler.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Amon20044/AI-Key-Scheduler/issues"
+  },
+  "homepage": "https://github.com/Amon20044/AI-Key-Scheduler#readme",
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && tsc -p tsconfig.types.json && node scripts/fix-cjs-extensions.cjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "ai-key-manager",
+    "rate-limit",
+    "api-keys",
+    "scheduler",
+    "ai",
+    "llm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.5"
+  }
+}
