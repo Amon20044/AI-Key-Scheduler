@@ -105,7 +105,17 @@ export interface KeyFallbackEvent {
 
 export type KeyFallbackConfig = "all" | false | AcquireRequest[];
 
-export interface WithKeyRetryOptions<T> extends AcquireRequest {
+export interface WithKeyRetryOptions<T> {
+  /**
+   * Target provider. Optional — if omitted, the scheduler tries all configured
+   * provider/model groups in order (with fallback).
+   */
+  provider?: string;
+  /**
+   * Target model. Optional — if omitted, the scheduler tries all configured
+   * provider/model groups in order (with fallback).
+   */
+  model?: string;
   execute(context: KeyExecutionContext): Promise<T>;
   /**
    * Defaults to the number of keys configured for the exact provider/model group.

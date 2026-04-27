@@ -20,6 +20,9 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
   const startedAt = now();
   const deadline = startedAt + timeoutMs;
   const routes = buildRoutes(scheduler, options);
+  const requestedRoute: AcquireRequest = options.provider && options.model
+    ? { provider: options.provider, model: options.model }
+    : routes[0] ?? { provider: "unknown", model: "unknown" };
   let lastExhaustedError: KeyExhaustedError | undefined;
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
@@ -95,7 +98,7 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
           signal: options.signal
         });
         await lease.success();
-        rememberRouteAffinity(scheduler, options, route);
+        rememberRouteAffinity(scheduler, requestedRoute, route);
         return result;
       } catch (error) {
         if (options.signal?.aborted) {
@@ -105,7 +108,7 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
 
         if (isFallbackRouteError(error, options)) {
           await lease.release();
-          clearRouteAffinityIfFailed(scheduler, options, route);
+          clearRouteAffinityIfFailed(scheduler, requestedRoute, route);
           if (routeIndex >= routes.length - 1) {
             const routeErrorMessage = isModelAccessDeniedOrNotFoundError(error)
               ? "Model access denied or not found (404) across all configured provider/model routes."
@@ -119,7 +122,7 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
           }
 
           const nextRoute = routes[routeIndex + 1];
-          rememberRouteAffinity(scheduler, options, nextRoute);
+          rememberRouteAffinity(scheduler, requestedRoute, nextRoute);
 
           await options.onFallback?.({
             fromProvider: route.provider,
@@ -171,7 +174,8 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
     });
   }
 
-  throw lastExhaustedError ?? exhaustedError(options, { reason: "no_available_key", attempts: 0, maxAttempts: 0, timeoutMs });
+  const fallbackRoute = routes[0] ?? { provider: options.provider ?? "unknown", model: options.model ?? "unknown" };
+  throw lastExhaustedError ?? exhaustedError(fallbackRoute, { reason: "no_available_key", attempts: 0, maxAttempts: 0, timeoutMs });
 }
 
 export async function withStreamKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): Promise<T> {
@@ -267,13 +271,25 @@ function isModelAccessDeniedOrNotFoundError(error: unknown): boolean {
 
 function buildRoutes<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): AcquireRequest[] {
   const routes: AcquireRequest[] = [];
-  const requestedRoute = toAcquireRequest(options);
 
   const addRoute = (route: AcquireRequest) => {
     if (!routes.some((candidate) => candidate.provider === route.provider && candidate.model === route.model)) {
       routes.push({ provider: route.provider, model: route.model });
     }
   };
+
+  // When provider/model are not specified, use all configured groups
+  const hasRequestedRoute = options.provider !== undefined && options.model !== undefined;
+
+  if (!hasRequestedRoute) {
+    // Auto-pick: try all configured groups in order
+    for (const group of scheduler.listGroups()) {
+      addRoute(toAcquireRequest(group));
+    }
+    return routes;
+  }
+
+  const requestedRoute: AcquireRequest = { provider: options.provider!, model: options.model! };
 
   if (options.fallbacks === false) {
     addRoute(requestedRoute);

@@ -773,3 +773,72 @@ describe("battle: edge case error patterns", () => {
     expect(isRetryableKeyError({ status: 500, message: "database connection failed" })).toBe(false);
   });
 });
+
+describe("battle: auto-pick mode (no provider/model in withRetry)", () => {
+  it("withRetry without provider/model picks from all configured groups", async () => {
+    const scheduler = multiProviderScheduler();
+    const received: { provider: string; model: string }[] = [];
+
+    const result = await scheduler.withRetry({
+      execute: async ({ provider, model }) => {
+        received.push({ provider, model });
+        return { provider, model };
+      }
+    });
+
+    expect(received).toHaveLength(1);
+    // Should pick from one of the configured groups
+    expect(["google", "openrouter", "gateway"]).toContain(result.provider);
+  });
+
+  it("auto-pick cascades to next group when first group route-fails", async () => {
+    const scheduler = multiProviderScheduler();
+    const trail: string[] = [];
+
+    const result = await scheduler.withRetry({
+      execute: async ({ provider }) => {
+        trail.push(provider);
+        if (provider === "google") throw new Error("UPSTREAM_ERROR 404 not found");
+        return { provider };
+      }
+    });
+
+    expect(trail[0]).toBe("google");
+    expect(result.provider).not.toBe("google");
+  });
+
+  it("auto-pick cascades to next group when first group keys are rate-limited", async () => {
+    const scheduler = multiProviderScheduler();
+    const trail: string[] = [];
+
+    const result = await scheduler.withRetry({
+      execute: async ({ provider, key }) => {
+        trail.push(`${provider}:${key.id}`);
+        if (provider === "google") throw new Error("429 rate limit exhausted");
+        return { provider };
+      }
+    });
+
+    // google has 2 keys, should exhaust both before moving on
+    expect(trail.filter((t) => t.startsWith("google:")).length).toBe(2);
+    expect(result.provider).not.toBe("google");
+  });
+
+  it("auto-pick with single provider works without specifying provider/model", async () => {
+    const scheduler = new KeyScheduler({
+      providers: [{
+        name: "solo", model: "solo-model", defaultCooldownMs: 500,
+        keys: [{ id: "s1", value: "sk-s1" }]
+      }],
+      state: new MemoryStateAdapter()
+    });
+
+    const result = await scheduler.withRetry({
+      execute: async ({ provider, model, apiKey }) => {
+        return { provider, model, apiKey };
+      }
+    });
+
+    expect(result).toEqual({ provider: "solo", model: "solo-model", apiKey: "sk-s1" });
+  });
+});
