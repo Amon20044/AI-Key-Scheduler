@@ -1,1349 +1,1620 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AKM — AI Key Manager | Rate-Limit Aware API Key Scheduling</title>
-  <meta name="description" content="Stop losing demos to rate limits. AKM is a local-first, zero-telemetry API key scheduler for Node.js. Smart LRU selection, auto-failover, secret redaction. Built for MVP builders and hackathon teams." />
-  <meta name="keywords" content="AI key manager, API key rotation, rate limit, Node.js, TypeScript, LLM, OpenAI, Gemini, OpenRouter, key scheduling, hackathon, MVP" />
-  <meta name="author" content="Amon20044" />
-  <meta property="og:title" content="AKM — AI Key Manager" />
-  <meta property="og:description" content="Your demo didn't fail because of the model. It failed because your API key got rate-limited." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://amon20044.github.io/AI-Key-Scheduler" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="AKM — AI Key Manager" />
-  <meta name="twitter:description" content="Rate-limit aware API key scheduling. Never fail a demo again." />
-  <link rel="canonical" href="https://amon20044.github.io/AI-Key-Scheduler" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,400&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --bg: #060608;
-      --bg2: #0d0d12;
-      --bg3: #12121a;
-      --surface: #16161f;
-      --surface2: #1e1e2a;
-      --border: rgba(255,255,255,0.07);
-      --border2: rgba(255,255,255,0.12);
-      --accent: #f0e040;
-      --accent2: #e8d438;
-      --accent-dim: rgba(240,224,64,0.12);
-      --accent-glow: rgba(240,224,64,0.25);
-      --red: #ff4455;
-      --green: #22dd88;
-      --blue: #4488ff;
-      --purple: #9966ff;
-      --text: #e8e8f0;
-      --text2: #9898b0;
-      --text3: #5a5a6e;
-      --radius: 12px;
-      --radius2: 20px;
-    }
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    html { scroll-behavior: smooth; }
-
-    body {
-      font-family: 'DM Sans', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      overflow-x: hidden;
-      line-height: 1.6;
-    }
-
-    /* ── NOISE OVERLAY ── */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-      pointer-events: none;
-      z-index: 0;
-      opacity: 0.4;
-    }
-
-    /* ── NAV ── */
-    nav {
-      position: fixed;
-      top: 0; left: 0; right: 0;
-      z-index: 100;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 clamp(1.5rem, 5vw, 4rem);
-      height: 64px;
-      background: rgba(6,6,8,0.8);
-      backdrop-filter: blur(20px);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .nav-logo {
-      font-family: 'Syne', sans-serif;
-      font-weight: 800;
-      font-size: 1.25rem;
-      letter-spacing: -0.02em;
-      color: var(--accent);
-      text-decoration: none;
-    }
-
-    .nav-logo span {
-      color: var(--text);
-      font-weight: 400;
-    }
-
-    .nav-links {
-      display: flex;
-      gap: 2rem;
-      list-style: none;
-    }
-
-    .nav-links a {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.78rem;
-      color: var(--text2);
-      text-decoration: none;
-      letter-spacing: 0.05em;
-      transition: color 0.2s;
-    }
-
-    .nav-links a:hover { color: var(--text); }
-
-    .nav-cta {
-      display: flex;
-      gap: 0.75rem;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 1.1rem;
-      border-radius: 8px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.78rem;
-      font-weight: 500;
-      text-decoration: none;
-      letter-spacing: 0.03em;
-      transition: all 0.2s;
-      cursor: pointer;
-      border: none;
-    }
-
-    .btn-ghost {
-      background: transparent;
-      color: var(--text2);
-      border: 1px solid var(--border2);
-    }
-
-    .btn-ghost:hover {
-      background: var(--surface);
-      color: var(--text);
-      border-color: rgba(255,255,255,0.2);
-    }
-
-    .btn-accent {
-      background: var(--accent);
-      color: #060608;
-      font-weight: 700;
-    }
-
-    .btn-accent:hover {
-      background: #fff;
-      transform: translateY(-1px);
-      box-shadow: 0 8px 24px var(--accent-glow);
-    }
-
-    /* ── HERO ── */
-    .hero {
-      position: relative;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 8rem clamp(1.5rem, 5vw, 4rem) 6rem;
-      text-align: center;
-      overflow: hidden;
-    }
-
-    /* Radial glows */
-    .hero::after {
-      content: '';
-      position: absolute;
-      top: -10%;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 900px;
-      height: 600px;
-      background: radial-gradient(ellipse, rgba(240,224,64,0.08) 0%, transparent 70%);
-      pointer-events: none;
-    }
-
-    .hero-eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      background: var(--surface);
-      border: 1px solid var(--border2);
-      padding: 0.35rem 0.9rem;
-      border-radius: 100px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.72rem;
-      color: var(--accent);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 2.5rem;
-      animation: fadeUp 0.6s ease both;
-    }
-
-    .dot-pulse {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--green);
-      animation: pulse 2s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.8); }
-    }
-
-    .hero-headline {
-      font-family: 'Syne', sans-serif;
-      font-size: clamp(2.8rem, 7vw, 6rem);
-      font-weight: 800;
-      line-height: 1.05;
-      letter-spacing: -0.03em;
-      max-width: 900px;
-      animation: fadeUp 0.6s 0.1s ease both;
-    }
-
-    .hero-headline .strike {
-      position: relative;
-      color: var(--text3);
-    }
-
-    .hero-headline .strike::after {
-      content: '';
-      position: absolute;
-      left: 0; right: 0;
-      top: 55%;
-      height: 3px;
-      background: var(--red);
-      transform: rotate(-1deg);
-    }
-
-    .hero-headline .accent-word {
-      color: var(--accent);
-      position: relative;
-    }
-
-    .hero-sub {
-      margin-top: 2rem;
-      font-size: clamp(1rem, 2.5vw, 1.2rem);
-      color: var(--text2);
-      max-width: 620px;
-      line-height: 1.7;
-      animation: fadeUp 0.6s 0.2s ease both;
-    }
-
-    .hero-sub strong {
-      color: var(--text);
-      font-weight: 500;
-    }
-
-    /* Install block */
-    .install-block {
-      margin-top: 2.5rem;
-      display: flex;
-      align-items: center;
-      gap: 0;
-      background: var(--bg2);
-      border: 1px solid var(--border2);
-      border-radius: 10px;
-      overflow: hidden;
-      animation: fadeUp 0.6s 0.3s ease both;
-      box-shadow: 0 0 0 1px rgba(240,224,64,0.05), 0 20px 60px rgba(0,0,0,0.5);
-    }
-
-    .install-block code {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.95rem;
-      color: var(--accent);
-      padding: 0.85rem 1.2rem;
-      flex: 1;
-      letter-spacing: 0.02em;
-    }
-
-    .install-block code span { color: var(--text2); }
-
-    .copy-btn {
-      padding: 0.85rem 1.1rem;
-      background: var(--surface2);
-      border: none;
-      border-left: 1px solid var(--border2);
-      cursor: pointer;
-      color: var(--text2);
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.72rem;
-      letter-spacing: 0.05em;
-      transition: all 0.2s;
-    }
-
-    .copy-btn:hover { background: var(--surface); color: var(--accent); }
-
-    .hero-actions {
-      display: flex;
-      gap: 1rem;
-      margin-top: 1.5rem;
-      animation: fadeUp 0.6s 0.4s ease both;
-    }
-
-    .btn-large {
-      padding: 0.8rem 1.8rem;
-      font-size: 0.88rem;
-      border-radius: 10px;
-    }
-
-    .star-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-
-    .hero-badges {
-      display: flex;
-      gap: 2rem;
-      margin-top: 3rem;
-      animation: fadeUp 0.6s 0.5s ease both;
-    }
-
-    .badge {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-size: 0.82rem;
-      color: var(--text3);
-    }
-
-    .badge .icon { font-size: 1rem; }
-    .badge strong { color: var(--text2); font-weight: 500; }
-
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(24px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    /* ── PANIC SECTION ── */
-    .panic {
-      padding: 5rem clamp(1.5rem, 5vw, 4rem);
-      max-width: 1100px;
-      margin: 0 auto;
-    }
-
-    .panic-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5px;
-      background: var(--border);
-      border: 1.5px solid var(--border);
-      border-radius: var(--radius2);
-      overflow: hidden;
-    }
-
-    .panic-card {
-      background: var(--bg2);
-      padding: 2rem;
-    }
-
-    .panic-card.red-card {
-      background: rgba(255,68,85,0.06);
-    }
-
-    .panic-card.green-card {
-      background: rgba(34,221,136,0.04);
-    }
-
-    .panic-label {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.7rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      margin-bottom: 1rem;
-      padding: 0.25rem 0.6rem;
-      border-radius: 4px;
-      display: inline-block;
-    }
-
-    .panic-label.bad { color: var(--red); background: rgba(255,68,85,0.1); }
-    .panic-label.good { color: var(--green); background: rgba(34,221,136,0.1); }
-
-    .panic-text {
-      font-size: 1.05rem;
-      color: var(--text2);
-      line-height: 1.65;
-    }
-
-    .panic-text strong { color: var(--text); }
-
-    /* Terminal block */
-    .terminal {
-      background: #0a0a0f;
-      border-radius: var(--radius);
-      border: 1px solid var(--border2);
-      overflow: hidden;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.82rem;
-      margin-top: 1.2rem;
-    }
-
-    .terminal-bar {
-      background: var(--surface);
-      padding: 0.5rem 0.8rem;
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .dot { width: 10px; height: 10px; border-radius: 50%; }
-    .dot.r { background: #ff5f57; }
-    .dot.y { background: #febc2e; }
-    .dot.g { background: #28c840; }
-
-    .terminal-body { padding: 1rem; }
-
-    .terminal-body .line { line-height: 1.8; }
-    .t-dim { color: var(--text3); }
-    .t-red { color: var(--red); }
-    .t-green { color: var(--green); }
-    .t-yellow { color: var(--accent); }
-    .t-blue { color: var(--blue); }
-    .t-purple { color: var(--purple); }
-
-    /* ── SECTION LAYOUT ── */
-    section {
-      padding: 5rem clamp(1.5rem, 5vw, 4rem);
-      max-width: 1100px;
-      margin: 0 auto;
-    }
-
-    .section-label {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.7rem;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color: var(--accent);
-      margin-bottom: 0.8rem;
-    }
-
-    .section-title {
-      font-family: 'Syne', sans-serif;
-      font-size: clamp(1.8rem, 4vw, 2.8rem);
-      font-weight: 800;
-      letter-spacing: -0.025em;
-      line-height: 1.1;
-      margin-bottom: 1rem;
-    }
-
-    .section-body {
-      color: var(--text2);
-      font-size: 1.05rem;
-      max-width: 560px;
-      line-height: 1.7;
-    }
-
-    /* ── HOW IT WORKS ── */
-    .how-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1px;
-      background: var(--border);
-      border: 1px solid var(--border);
-      border-radius: var(--radius2);
-      overflow: hidden;
-      margin-top: 3rem;
-    }
-
-    .how-card {
-      background: var(--bg2);
-      padding: 2rem;
-      position: relative;
-    }
-
-    .how-num {
-      font-family: 'Syne', sans-serif;
-      font-size: 3.5rem;
-      font-weight: 800;
-      color: rgba(255,255,255,0.04);
-      line-height: 1;
-      position: absolute;
-      top: 1.2rem;
-      right: 1.2rem;
-    }
-
-    .how-icon {
-      font-size: 1.6rem;
-      margin-bottom: 1rem;
-      display: block;
-    }
-
-    .how-card h3 {
-      font-family: 'Syne', sans-serif;
-      font-size: 1.1rem;
-      font-weight: 700;
-      margin-bottom: 0.6rem;
-      color: var(--text);
-    }
-
-    .how-card p {
-      font-size: 0.88rem;
-      color: var(--text2);
-      line-height: 1.65;
-    }
-
-    /* ── ARCHITECTURE ── */
-    .arch-wrap {
-      margin-top: 3rem;
-      background: var(--bg2);
-      border: 1px solid var(--border2);
-      border-radius: var(--radius2);
-      overflow: hidden;
-    }
-
-    .arch-header {
-      padding: 1.2rem 1.5rem;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 0.8rem;
-    }
-
-    .arch-title {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.8rem;
-      color: var(--text2);
-    }
-
-    .arch-body {
-      padding: 2rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
-
-    /* Stack diagram */
-    .stack-diagram {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.82rem;
-      line-height: 1.9;
-    }
-
-    .stack-row {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      padding: 0.6rem 1rem;
-      border-radius: 8px;
-      transition: background 0.15s;
-    }
-
-    .stack-row:hover { background: var(--surface); }
-
-    .stack-badge {
-      min-width: 90px;
-      text-align: center;
-      padding: 0.2rem 0.5rem;
-      border-radius: 5px;
-      font-size: 0.7rem;
-      letter-spacing: 0.05em;
-    }
-
-    .stack-arrow { color: var(--text3); }
-    .stack-desc { color: var(--text2); }
-    .stack-desc strong { color: var(--text); }
-
-    /* ── LEVEL DIAGRAM ── */
-    .levels {
-      margin-top: 3rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-
-    .level {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-    }
-
-    .level-header {
-      padding: 1rem 1.5rem;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      cursor: pointer;
-    }
-
-    .level-label {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .level-num {
-      width: 28px;
-      height: 28px;
-      border-radius: 6px;
-      background: var(--accent);
-      color: #060608;
-      font-family: 'Syne', sans-serif;
-      font-weight: 800;
-      font-size: 0.85rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .level-name {
-      font-family: 'Syne', sans-serif;
-      font-weight: 700;
-      font-size: 1rem;
-    }
-
-    .level-tag {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.7rem;
-      padding: 0.2rem 0.6rem;
-      border-radius: 4px;
-      background: var(--surface2);
-      color: var(--text2);
-    }
-
-    .level-body {
-      padding: 0 1.5rem 1.5rem;
-    }
-
-    .level-desc {
-      font-size: 0.9rem;
-      color: var(--text2);
-      margin-bottom: 1rem;
-      line-height: 1.65;
-    }
-
-    /* Key pills */
-    .key-row {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-
-    .key-pill {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      background: var(--surface);
-      border: 1px solid var(--border2);
-      padding: 0.35rem 0.7rem;
-      border-radius: 6px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.72rem;
-    }
-
-    .key-status {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-    }
-
-    .key-status.healthy { background: var(--green); }
-    .key-status.cooling { background: var(--accent); }
-    .key-status.dead { background: var(--red); }
-
-    /* ── FEATURES ── */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 1.5rem;
-      margin-top: 3rem;
-    }
-
-    .feature-card {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius2);
-      padding: 1.8rem;
-      position: relative;
-      overflow: hidden;
-      transition: border-color 0.2s, transform 0.2s;
-    }
-
-    .feature-card:hover {
-      border-color: rgba(240,224,64,0.2);
-      transform: translateY(-2px);
-    }
-
-    .feature-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, var(--accent), transparent);
-      opacity: 0;
-      transition: opacity 0.2s;
-    }
-
-    .feature-card:hover::before { opacity: 1; }
-
-    .feature-icon {
-      font-size: 1.5rem;
-      margin-bottom: 1rem;
-      display: block;
-    }
-
-    .feature-card h3 {
-      font-family: 'Syne', sans-serif;
-      font-size: 1.05rem;
-      font-weight: 700;
-      margin-bottom: 0.5rem;
-    }
-
-    .feature-card p {
-      font-size: 0.88rem;
-      color: var(--text2);
-      line-height: 1.65;
-    }
-
-    .feature-card .tag {
-      display: inline-block;
-      margin-top: 0.75rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.68rem;
-      padding: 0.2rem 0.5rem;
-      border-radius: 4px;
-      background: var(--accent-dim);
-      color: var(--accent);
-      letter-spacing: 0.05em;
-    }
-
-    /* ── CODE EXAMPLE ── */
-    .code-tabs {
-      margin-top: 3rem;
-      background: var(--bg2);
-      border: 1px solid var(--border2);
-      border-radius: var(--radius2);
-      overflow: hidden;
-    }
-
-    .tab-bar {
-      display: flex;
-      border-bottom: 1px solid var(--border);
-      overflow-x: auto;
-    }
-
-    .tab {
-      padding: 0.8rem 1.2rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.75rem;
-      color: var(--text3);
-      cursor: pointer;
-      border: none;
-      background: none;
-      white-space: nowrap;
-      transition: color 0.2s;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-    }
-
-    .tab.active {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-      background: rgba(240,224,64,0.03);
-    }
-
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-
-    pre {
-      padding: 1.5rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.8rem;
-      line-height: 1.8;
-      overflow-x: auto;
-      color: var(--text);
-    }
-
-    .k { color: #c792ea; }   /* keyword */
-    .s { color: var(--green); } /* string */
-    .c { color: var(--text3); font-style: italic; } /* comment */
-    .f { color: #82aaff; }   /* function */
-    .n { color: var(--accent); } /* name/variable */
-    .t { color: #ff9f7e; }   /* type */
-
-    /* ── FOR WHO ── */
-    .audience-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1rem;
-      margin-top: 3rem;
-    }
-
-    .audience-card {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius2);
-      padding: 1.5rem;
-      text-align: center;
-      transition: all 0.2s;
-    }
-
-    .audience-card:hover {
-      border-color: rgba(240,224,64,0.2);
-      background: var(--surface);
-    }
-
-    .audience-emoji { font-size: 2rem; display: block; margin-bottom: 0.75rem; }
-
-    .audience-card h3 {
-      font-family: 'Syne', sans-serif;
-      font-size: 0.95rem;
-      font-weight: 700;
-      margin-bottom: 0.4rem;
-    }
-
-    .audience-card p {
-      font-size: 0.8rem;
-      color: var(--text2);
-      line-height: 1.55;
-    }
-
-    /* ── COMPARISON ── */
-    .compare-table {
-      margin-top: 3rem;
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius2);
-      overflow: hidden;
-    }
-
-    .compare-table th {
-      padding: 1rem 1.5rem;
-      font-family: 'Syne', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
-      text-align: left;
-      background: var(--surface);
-      color: var(--text2);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .compare-table th.akm-col { color: var(--accent); }
-
-    .compare-table td {
-      padding: 0.9rem 1.5rem;
-      font-size: 0.85rem;
-      border-bottom: 1px solid var(--border);
-      color: var(--text2);
-    }
-
-    .compare-table tr:last-child td { border-bottom: none; }
-
-    .compare-table td:first-child { color: var(--text); font-weight: 500; }
-
-    .check { color: var(--green); font-weight: 700; }
-    .cross { color: var(--red); }
-    .partial { color: var(--accent); }
-
-    /* ── CTA ── */
-    .cta-section {
-      padding: 6rem clamp(1.5rem, 5vw, 4rem);
-      text-align: center;
-      position: relative;
-    }
-
-    .cta-glow {
-      position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      width: 600px;
-      height: 300px;
-      background: radial-gradient(ellipse, rgba(240,224,64,0.07) 0%, transparent 70%);
-      pointer-events: none;
-    }
-
-    .cta-inner {
-      position: relative;
-      background: var(--bg2);
-      border: 1px solid rgba(240,224,64,0.2);
-      border-radius: var(--radius2);
-      max-width: 680px;
-      margin: 0 auto;
-      padding: 3rem 2rem;
-    }
-
-    .cta-inner h2 {
-      font-family: 'Syne', sans-serif;
-      font-size: clamp(1.8rem, 4vw, 2.5rem);
-      font-weight: 800;
-      letter-spacing: -0.025em;
-      margin-bottom: 1rem;
-    }
-
-    .cta-inner p {
-      color: var(--text2);
-      font-size: 1rem;
-      margin-bottom: 2rem;
-    }
-
-    .cta-btns {
-      display: flex;
-      gap: 1rem;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-
-    /* ── FOOTER ── */
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 2rem clamp(1.5rem, 5vw, 4rem);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 1rem;
-    }
-
-    .footer-left {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-    }
-
-    .footer-logo {
-      font-family: 'Syne', sans-serif;
-      font-weight: 800;
-      font-size: 1rem;
-      color: var(--accent);
-      text-decoration: none;
-    }
-
-    .footer-note {
-      font-size: 0.8rem;
-      color: var(--text3);
-    }
-
-    .footer-links {
-      display: flex;
-      gap: 1.5rem;
-    }
-
-    .footer-links a {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.75rem;
-      color: var(--text3);
-      text-decoration: none;
-      transition: color 0.2s;
-    }
-
-    .footer-links a:hover { color: var(--text2); }
-
-    /* ── DIVIDER ── */
-    .divider {
-      height: 1px;
-      background: var(--border);
-      margin: 0 clamp(1.5rem, 5vw, 4rem);
-    }
-
-    /* ── SCROLLBAR ── */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
-
-    /* ── RESPONSIVE ── */
-    @media (max-width: 900px) {
-      .how-grid { grid-template-columns: 1fr; }
-      .features-grid { grid-template-columns: 1fr; }
-      .audience-grid { grid-template-columns: repeat(2, 1fr); }
-      .panic-grid { grid-template-columns: 1fr; }
-      .nav-links { display: none; }
-    }
-
-    @media (max-width: 600px) {
-      .audience-grid { grid-template-columns: 1fr; }
-      .hero-badges { flex-direction: column; gap: 0.75rem; }
-      .hero-actions { flex-direction: column; align-items: center; }
-    }
-
-    /* Tooltip */
-    .tooltip-wrap { position: relative; display: inline-block; }
-    .tooltip {
-      visibility: hidden;
-      opacity: 0;
-      background: var(--surface2);
-      color: var(--text);
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.72rem;
-      padding: 0.35rem 0.65rem;
-      border-radius: 5px;
-      position: absolute;
-      bottom: calc(100% + 6px);
-      left: 50%;
-      transform: translateX(-50%);
-      white-space: nowrap;
-      transition: opacity 0.15s;
-      pointer-events: none;
-      border: 1px solid var(--border2);
-    }
-    .tooltip-wrap:hover .tooltip { visibility: visible; opacity: 1; }
-
-    /* Animated border on code */
-    @keyframes borderGlow {
-      0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
-      50% { box-shadow: 0 0 24px 4px var(--accent-glow); }
-    }
-
-    .install-block {
-      animation: fadeUp 0.6s 0.3s ease both, borderGlow 4s 1s ease-in-out infinite;
-    }
-  </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AKM — AI Key Manager | Rate-Limit Aware API Key Scheduling</title>
+    <meta name="description"
+        content="Stop losing demos to rate limits. AKM is a local-first, zero-telemetry API key scheduler for Node.js. Smart LRU selection, auto-failover, secret redaction. Built for MVP builders and hackathon teams." />
+    <meta name="keywords"
+        content="AI key manager, API key rotation, rate limit, Node.js, TypeScript, LLM, OpenAI, Gemini, OpenRouter, key scheduling, hackathon, MVP" />
+    <meta name="author" content="Amon20044" />
+    <meta property="og:title" content="AKM — AI Key Manager" />
+    <meta property="og:description"
+        content="Your demo didn't fail because of the model. It failed because your API key got rate-limited." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://amon20044.github.io/AI-Key-Scheduler" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AKM — AI Key Manager" />
+    <meta name="twitter:description" content="Rate-limit aware API key scheduling. Never fail a demo again." />
+    <link rel="canonical" href="https://amon20044.github.io/AI-Key-Scheduler" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,400&display=swap"
+        rel="stylesheet" />
+    <style>
+        :root {
+            --bg: #060608;
+            --bg2: #0d0d12;
+            --bg3: #12121a;
+            --surface: #16161f;
+            --surface2: #1e1e2a;
+            --border: rgba(255, 255, 255, 0.07);
+            --border2: rgba(255, 255, 255, 0.12);
+            --accent: #f0e040;
+            --accent2: #e8d438;
+            --accent-dim: rgba(240, 224, 64, 0.12);
+            --accent-glow: rgba(240, 224, 64, 0.25);
+            --red: #ff4455;
+            --green: #22dd88;
+            --blue: #4488ff;
+            --purple: #9966ff;
+            --text: #e8e8f0;
+            --text2: #9898b0;
+            --text3: #5a5a6e;
+            --radius: 12px;
+            --radius2: 20px;
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* ── NOISE OVERLAY ── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.4;
+        }
+
+        /* ── NAV ── */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 clamp(1.5rem, 5vw, 4rem);
+            height: 64px;
+            background: rgba(6, 6, 8, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-logo {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            font-size: 1.25rem;
+            letter-spacing: -0.02em;
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .nav-logo span {
+            color: var(--text);
+            font-weight: 400;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            color: var(--text2);
+            text-decoration: none;
+            letter-spacing: 0.05em;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text);
+        }
+
+        .nav-cta {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1.1rem;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            font-weight: 500;
+            text-decoration: none;
+            letter-spacing: 0.03em;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text2);
+            border: 1px solid var(--border2);
+        }
+
+        .btn-ghost:hover {
+            background: var(--surface);
+            color: var(--text);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-accent {
+            background: var(--accent);
+            color: #060608;
+            font-weight: 700;
+        }
+
+        .btn-accent:hover {
+            background: #fff;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 24px var(--accent-glow);
+        }
+
+        /* ── HERO ── */
+        .hero {
+            position: relative;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 8rem clamp(1.5rem, 5vw, 4rem) 6rem;
+            text-align: center;
+            overflow: hidden;
+        }
+
+        /* Radial glows */
+        .hero::after {
+            content: '';
+            position: absolute;
+            top: -10%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80vw;
+            height: 600px;
+            background: radial-gradient(ellipse, rgba(240, 224, 64, 0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--surface);
+            border: 1px solid var(--border2);
+            padding: 0.35rem 0.9rem;
+            border-radius: 100px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 2.5rem;
+            animation: fadeUp 0.6s ease both;
+        }
+
+        .dot-pulse {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.4;
+                transform: scale(0.8);
+            }
+        }
+
+        .hero-headline {
+            font-family: 'Syne', sans-serif;
+            font-size: clamp(1.5rem, 5vw, 4.5rem);
+            font-weight: 800;
+            line-height: 1.05;
+            letter-spacing: -0.03em;
+            max-width: 80vw;
+            animation: fadeUp 0.6s 0.1s ease both;
+        }
+
+        .hero-headline .strike {
+            position: relative;
+            color: var(--text3);
+        }
+
+        .hero-headline .strike::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 55%;
+            height: 3px;
+            background: var(--red);
+            transform: rotate(-1deg);
+        }
+
+        .hero-headline .accent-word {
+            color: var(--accent);
+            position: relative;
+        }
+
+        .hero-sub {
+            margin-top: 2rem;
+            font-size: clamp(1rem, 2.5vw, 1.2rem);
+            color: var(--text2);
+            max-width: 620px;
+            line-height: 1.7;
+            animation: fadeUp 0.6s 0.2s ease both;
+        }
+
+        .hero-sub strong {
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        /* Install block */
+        .install-block {
+            margin-top: 2.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0;
+            background: var(--bg2);
+            border: 1px solid var(--border2);
+            border-radius: 10px;
+            overflow: hidden;
+            animation: fadeUp 0.6s 0.3s ease both;
+            box-shadow: 0 0 0 1px rgba(240, 224, 64, 0.05), 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .install-block code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.95rem;
+            color: var(--accent);
+            padding: 0.85rem 1.2rem;
+            flex: 1;
+            letter-spacing: 0.02em;
+        }
+
+        .install-block code span {
+            color: var(--text2);
+        }
+
+        .copy-btn {
+            padding: 0.85rem 1.1rem;
+            background: var(--surface2);
+            border: none;
+            border-left: 1px solid var(--border2);
+            cursor: pointer;
+            color: var(--text2);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            letter-spacing: 0.05em;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: var(--surface);
+            color: var(--accent);
+        }
+
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            animation: fadeUp 0.6s 0.4s ease both;
+        }
+
+        .btn-large {
+            padding: 0.8rem 1.8rem;
+            font-size: 0.88rem;
+            border-radius: 10px;
+        }
+
+        .star-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .hero-badges {
+            display: flex;
+            gap: 2rem;
+            margin-top: 3rem;
+            animation: fadeUp 0.6s 0.5s ease both;
+        }
+
+        .badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.82rem;
+            color: var(--text3);
+        }
+
+        .badge .icon {
+            font-size: 1rem;
+        }
+
+        .badge strong {
+            color: var(--text2);
+            font-weight: 500;
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(24px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* ── PANIC SECTION ── */
+        .panic {
+            padding: 5rem clamp(1.5rem, 5vw, 4rem);
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .panic-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5px;
+            background: var(--border);
+            border: 1.5px solid var(--border);
+            border-radius: var(--radius2);
+            overflow: hidden;
+        }
+
+        .panic-card {
+            background: var(--bg2);
+            padding: 2rem;
+        }
+
+        .panic-card.red-card {
+            background: rgba(255, 68, 85, 0.06);
+        }
+
+        .panic-card.green-card {
+            background: rgba(34, 221, 136, 0.04);
+        }
+
+        .panic-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+            padding: 0.25rem 0.6rem;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .panic-label.bad {
+            color: var(--red);
+            background: rgba(255, 68, 85, 0.1);
+        }
+
+        .panic-label.good {
+            color: var(--green);
+            background: rgba(34, 221, 136, 0.1);
+        }
+
+        .panic-text {
+            font-size: 1.05rem;
+            color: var(--text2);
+            line-height: 1.65;
+        }
+
+        .panic-text strong {
+            color: var(--text);
+        }
+
+        /* Terminal block */
+        .terminal {
+            background: #0a0a0f;
+            border-radius: var(--radius);
+            border: 1px solid var(--border2);
+            overflow: hidden;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem;
+            margin-top: 1.2rem;
+        }
+
+        .terminal-bar {
+            background: var(--surface);
+            padding: 0.5rem 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .dot.r {
+            background: #ff5f57;
+        }
+
+        .dot.y {
+            background: #febc2e;
+        }
+
+        .dot.g {
+            background: #28c840;
+        }
+
+        .terminal-body {
+            padding: 1rem;
+        }
+
+        .terminal-body .line {
+            line-height: 1.8;
+        }
+
+        .t-dim {
+            color: var(--text3);
+        }
+
+        .t-red {
+            color: var(--red);
+        }
+
+        .t-green {
+            color: var(--green);
+        }
+
+        .t-yellow {
+            color: var(--accent);
+        }
+
+        .t-blue {
+            color: var(--blue);
+        }
+
+        .t-purple {
+            color: var(--purple);
+        }
+
+        /* ── SECTION LAYOUT ── */
+        section {
+            padding: 5rem clamp(1.5rem, 5vw, 4rem);
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--accent);
+            margin-bottom: 0.8rem;
+        }
+
+        .section-title {
+            font-family: 'Syne', sans-serif;
+            font-size: clamp(1.8rem, 4vw, 2.8rem);
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+        }
+
+        .section-body {
+            color: var(--text2);
+            font-size: 1.05rem;
+            max-width: 560px;
+            line-height: 1.7;
+        }
+
+        /* ── HOW IT WORKS ── */
+        .how-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: var(--radius2);
+            overflow: hidden;
+            margin-top: 3rem;
+        }
+
+        .how-card {
+            background: var(--bg2);
+            padding: 2rem;
+            position: relative;
+        }
+
+        .how-num {
+            font-family: 'Syne', sans-serif;
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: rgba(255, 255, 255, 0.04);
+            line-height: 1;
+            position: absolute;
+            top: 1.2rem;
+            right: 1.2rem;
+        }
+
+        .how-icon {
+            font-size: 1.6rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .how-card h3 {
+            font-family: 'Syne', sans-serif;
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.6rem;
+            color: var(--text);
+        }
+
+        .how-card p {
+            font-size: 0.88rem;
+            color: var(--text2);
+            line-height: 1.65;
+        }
+
+        /* ── ARCHITECTURE ── */
+        .arch-wrap {
+            margin-top: 3rem;
+            background: var(--bg2);
+            border: 1px solid var(--border2);
+            border-radius: var(--radius2);
+            overflow: hidden;
+        }
+
+        .arch-header {
+            padding: 1.2rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .arch-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text2);
+        }
+
+        .arch-body {
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        /* Stack diagram */
+        .stack-diagram {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem;
+            line-height: 1.9;
+        }
+
+        .stack-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            transition: background 0.15s;
+        }
+
+        .stack-row:hover {
+            background: var(--surface);
+        }
+
+        .stack-badge {
+            min-width: 90px;
+            text-align: center;
+            padding: 0.2rem 0.5rem;
+            border-radius: 5px;
+            font-size: 0.7rem;
+            letter-spacing: 0.05em;
+        }
+
+        .stack-arrow {
+            color: var(--text3);
+        }
+
+        .stack-desc {
+            color: var(--text2);
+        }
+
+        .stack-desc strong {
+            color: var(--text);
+        }
+
+        /* ── LEVEL DIAGRAM ── */
+        .levels {
+            margin-top: 3rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .level {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .level-header {
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+
+        .level-label {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .level-num {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            background: var(--accent);
+            color: #060608;
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .level-name {
+            font-family: 'Syne', sans-serif;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+
+        .level-tag {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            background: var(--surface2);
+            color: var(--text2);
+        }
+
+        .level-body {
+            padding: 0 1.5rem 1.5rem;
+        }
+
+        .level-desc {
+            font-size: 0.9rem;
+            color: var(--text2);
+            margin-bottom: 1rem;
+            line-height: 1.65;
+        }
+
+        /* Key pills */
+        .key-row {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .key-pill {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: var(--surface);
+            border: 1px solid var(--border2);
+            padding: 0.35rem 0.7rem;
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+        }
+
+        .key-status {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .key-status.healthy {
+            background: var(--green);
+        }
+
+        .key-status.cooling {
+            background: var(--accent);
+        }
+
+        .key-status.dead {
+            background: var(--red);
+        }
+
+        /* ── FEATURES ── */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+            margin-top: 3rem;
+        }
+
+        .feature-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius2);
+            padding: 1.8rem;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+
+        .feature-card:hover {
+            border-color: rgba(240, 224, 64, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent), transparent);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
+        }
+
+        .feature-icon {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .feature-card h3 {
+            font-family: 'Syne', sans-serif;
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature-card p {
+            font-size: 0.88rem;
+            color: var(--text2);
+            line-height: 1.65;
+        }
+
+        .feature-card .tag {
+            display: inline-block;
+            margin-top: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.68rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            background: var(--accent-dim);
+            color: var(--accent);
+            letter-spacing: 0.05em;
+        }
+
+        /* ── CODE EXAMPLE ── */
+        .code-tabs {
+            margin-top: 3rem;
+            background: var(--bg2);
+            border: 1px solid var(--border2);
+            border-radius: var(--radius2);
+            overflow: hidden;
+        }
+
+        .tab-bar {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            overflow-x: auto;
+        }
+
+        .tab {
+            padding: 0.8rem 1.2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text3);
+            cursor: pointer;
+            border: none;
+            background: none;
+            white-space: nowrap;
+            transition: color 0.2s;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+        }
+
+        .tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            background: rgba(240, 224, 64, 0.03);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        pre {
+            padding: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 1.8;
+            overflow-x: auto;
+            color: var(--text);
+        }
+
+        .k {
+            color: #c792ea;
+        }
+
+        /* keyword */
+        .s {
+            color: var(--green);
+        }
+
+        /* string */
+        .c {
+            color: var(--text3);
+            font-style: italic;
+        }
+
+        /* comment */
+        .f {
+            color: #82aaff;
+        }
+
+        /* function */
+        .n {
+            color: var(--accent);
+        }
+
+        /* name/variable */
+        .t {
+            color: #ff9f7e;
+        }
+
+        /* type */
+
+        /* ── FOR WHO ── */
+        .audience-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin-top: 3rem;
+        }
+
+        .audience-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius2);
+            padding: 1.5rem;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .audience-card:hover {
+            border-color: rgba(240, 224, 64, 0.2);
+            background: var(--surface);
+        }
+
+        .audience-emoji {
+            font-size: 2rem;
+            display: block;
+            margin-bottom: 0.75rem;
+        }
+
+        .audience-card h3 {
+            font-family: 'Syne', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+        }
+
+        .audience-card p {
+            font-size: 0.8rem;
+            color: var(--text2);
+            line-height: 1.55;
+        }
+
+        /* ── COMPARISON ── */
+        .compare-table {
+            margin-top: 3rem;
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius2);
+            overflow: hidden;
+        }
+
+        .compare-table th {
+            padding: 1rem 1.5rem;
+            font-family: 'Syne', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-align: left;
+            background: var(--surface);
+            color: var(--text2);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .compare-table th.akm-col {
+            color: var(--accent);
+        }
+
+        .compare-table td {
+            padding: 0.9rem 1.5rem;
+            font-size: 0.85rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text2);
+        }
+
+        .compare-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .compare-table td:first-child {
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        .check {
+            color: var(--green);
+            font-weight: 700;
+        }
+
+        .cross {
+            color: var(--red);
+        }
+
+        .partial {
+            color: var(--accent);
+        }
+
+        /* ── CTA ── */
+        .cta-section {
+            padding: 6rem clamp(1.5rem, 5vw, 4rem);
+            text-align: center;
+            position: relative;
+        }
+
+        .cta-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 300px;
+            background: radial-gradient(ellipse, rgba(240, 224, 64, 0.07) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .cta-inner {
+            position: relative;
+            background: var(--bg2);
+            border: 1px solid rgba(240, 224, 64, 0.2);
+            border-radius: var(--radius2);
+            max-width: 680px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+        }
+
+        .cta-inner h2 {
+            font-family: 'Syne', sans-serif;
+            font-size: clamp(1.8rem, 4vw, 2.5rem);
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            margin-bottom: 1rem;
+        }
+
+        .cta-inner p {
+            color: var(--text2);
+            font-size: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .cta-btns {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* ── FOOTER ── */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 2rem clamp(1.5rem, 5vw, 4rem);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .footer-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .footer-logo {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            font-size: 1rem;
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .footer-note {
+            font-size: 0.8rem;
+            color: var(--text3);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .footer-links a {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text3);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: var(--text2);
+        }
+
+        /* ── DIVIDER ── */
+        .divider {
+            height: 1px;
+            background: var(--border);
+            margin: 0 clamp(1.5rem, 5vw, 4rem);
+        }
+
+        /* ── SCROLLBAR ── */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--surface2);
+            border-radius: 3px;
+        }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 900px) {
+            .how-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .audience-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .panic-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav-links {
+                display: none;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .audience-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-badges {
+                flex-direction: column;
+                gap: 0.75rem;
+            }
+
+            .hero-actions {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+
+        /* Tooltip */
+        .tooltip-wrap {
+            position: relative;
+            display: inline-block;
+        }
+
+        .tooltip {
+            visibility: hidden;
+            opacity: 0;
+            background: var(--surface2);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            padding: 0.35rem 0.65rem;
+            border-radius: 5px;
+            position: absolute;
+            bottom: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            transition: opacity 0.15s;
+            pointer-events: none;
+            border: 1px solid var(--border2);
+        }
+
+        .tooltip-wrap:hover .tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* Animated border on code */
+        @keyframes borderGlow {
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 0 var(--accent-glow);
+            }
+
+            50% {
+                box-shadow: 0 0 24px 4px var(--accent-glow);
+            }
+        }
+
+        .install-block {
+            animation: fadeUp 0.6s 0.3s ease both, borderGlow 4s 1s ease-in-out infinite;
+        }
+    </style>
 </head>
+
 <body>
 
-<!-- NAV -->
-<nav>
-  <a href="#" class="nav-logo">AKM<span>.js</span></a>
-  <ul class="nav-links">
-    <li><a href="#how">How it Works</a></li>
-    <li><a href="#features">Features</a></li>
-    <li><a href="#code">Code</a></li>
-    <li><a href="#for-who">For Who</a></li>
-  </ul>
-  <div class="nav-cta">
-    <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-ghost" target="_blank" rel="noopener">★ Star on GitHub</a>
-    <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-accent" target="_blank" rel="noopener">npm →</a>
-  </div>
-</nav>
-
-<!-- HERO -->
-<section class="hero" aria-label="Hero">
-  <div class="hero-eyebrow">
-    <div class="dot-pulse"></div>
-    v0.3.1 · stable · zero telemetry
-  </div>
-
-  <h1 class="hero-headline">
-    Your demo didn't fail<br>because of the <span class="strike">model</span>.<br>
-    It failed because your <span class="accent-word">API key</span><br>got rate-limited.
-  </h1>
-
-  <p class="hero-sub">
-    <strong>AKM</strong> sits quietly in your backend and makes sure your LLM calls don't randomly collapse —
-    right when it matters. Smart rotation, auto-failover, zero proxy.
-  </p>
-
-  <div class="install-block">
-    <code><span>$</span> npm install <span style="color:var(--text)">ai-key-manager</span></code>
-    <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy install command">COPY</button>
-  </div>
-
-  <div class="hero-actions">
-    <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-accent btn-large star-btn" target="_blank" rel="noopener">
-      ★ Star on GitHub
-    </a>
-    <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-ghost btn-large" target="_blank" rel="noopener">
-      View on npm
-    </a>
-    <a href="#code" class="btn btn-ghost btn-large">
-      See the code →
-    </a>
-  </div>
-
-  <div class="hero-badges">
-    <div class="badge"><span class="icon">🔒</span><strong>Zero Telemetry</strong> — local-first</div>
-    <div class="badge"><span class="icon">⚡</span><strong>Auto-Failover</strong> — across providers</div>
-    <div class="badge"><span class="icon">🔑</span><strong>Secrets Redacted</strong> — even in logs</div>
-    <div class="badge"><span class="icon">🧠</span><strong>Smart LRU</strong> — no manual rotation</div>
-  </div>
-</section>
-
-<div class="divider"></div>
-
-<!-- THE PROBLEM -->
-<div class="panic" id="problem">
-  <div style="margin-bottom:2rem">
-    <div class="section-label">The Problem</div>
-    <h2 class="section-title">It always happens<br>at the worst time.</h2>
-  </div>
-  <div class="panic-grid">
-    <div class="panic-card red-card">
-      <span class="panic-label bad">❌ Without AKM</span>
-      <div class="terminal">
-        <div class="terminal-bar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
-        <div class="terminal-body">
-          <div class="line"><span class="t-dim"># Your demo, live, investors watching</span></div>
-          <div class="line"><span class="t-blue">await</span> openai.<span class="t-yellow">chat</span>(...)</div>
-          <div class="line">&nbsp;</div>
-          <div class="line"><span class="t-red">Error 429: Rate limit exceeded</span></div>
-          <div class="line"><span class="t-red">Retry after: 60s</span></div>
-          <div class="line">&nbsp;</div>
-          <div class="line"><span class="t-dim"># Silence.</span></div>
-          <div class="line"><span class="t-dim"># Your key is cooling.</span></div>
-          <div class="line"><span class="t-dim"># Demo is dead.</span></div>
+    <!-- NAV -->
+    <nav>
+        <a href="#" class="nav-logo">AKM<span>.js</span></a>
+        <ul class="nav-links">
+            <li><a href="#how">How it Works</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#code">Code</a></li>
+            <li><a href="#for-who">For Who</a></li>
+        </ul>
+        <div class="nav-cta">
+            <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-ghost" target="_blank"
+                rel="noopener">★ Star on GitHub</a>
+            <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-accent" target="_blank"
+                rel="noopener">npm →</a>
         </div>
-      </div>
-    </div>
-    <div class="panic-card green-card">
-      <span class="panic-label good">✓ With AKM</span>
-      <div class="terminal">
-        <div class="terminal-bar"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
-        <div class="terminal-body">
-          <div class="line"><span class="t-dim"># Same demo. Different outcome.</span></div>
-          <div class="line"><span class="t-blue">await</span> scheduler.<span class="t-green">withRetry</span>({</div>
-          <div class="line">&nbsp;&nbsp;<span class="t-yellow">execute</span>: <span class="t-blue">async</span> ({ apiKey, model }) => {</div>
-          <div class="line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="t-blue">return</span> callLLM({ apiKey, model })</div>
-          <div class="line">&nbsp;&nbsp;}</div>
-          <div class="line">})</div>
-          <div class="line">&nbsp;</div>
-          <div class="line"><span class="t-green">✓ Key-1 rate-limited → rotated to Key-2</span></div>
-          <div class="line"><span class="t-green">✓ Response in 320ms</span></div>
-          <div class="line"><span class="t-green">✓ Demo running smoothly.</span></div>
+    </nav>
+
+    <!-- HERO -->
+    <section class="hero" aria-label="Hero">
+        <div class="hero-eyebrow">
+            <div class="dot-pulse"></div>
+            v0.3.1 · stable · zero telemetry
         </div>
-      </div>
-    </div>
-    <div class="panic-card" style="grid-column: 1 / -1;">
-      <p class="panic-text">
-        <strong>One key hits limit → everything breaks.</strong> Fallback logic scattered everywhere.
-        Retry logic = guesswork. Logs accidentally exposing secrets.
-        You've been there. AKM fixes that entire layer — in one wrapper.
-      </p>
-    </div>
-  </div>
-</div>
 
-<div class="divider"></div>
+        <h1 class="hero-headline">
+            Your demo didn't fail<br>because of the <span class="strike">model</span>.<br>
+            It failed because your <span class="accent-word">API key</span><br>got rate-limited.
+        </h1>
 
-<!-- HOW IT WORKS -->
-<section id="how">
-  <div class="section-label">How It Works</div>
-  <h2 class="section-title">One wrapper.<br>Everything handled.</h2>
-  <p class="section-body">
-    You write only the generation logic. AKM handles key selection, retries, cooldowns, failover, and health tracking automatically.
-  </p>
-
-  <div class="how-grid">
-    <div class="how-card">
-      <span class="how-num">01</span>
-      <span class="how-icon">🎯</span>
-      <h3>Pick the Best Key</h3>
-      <p>Greedy LRU selection picks the least-recently-used healthy key. Rate-limited keys cool in a min-heap and return to pool automatically.</p>
-    </div>
-    <div class="how-card">
-      <span class="how-num">02</span>
-      <span class="how-icon">🔄</span>
-      <h3>Auto-Rotate on 429</h3>
-      <p>Hit a rate limit? AKM marks that key, rotates to the next healthy one, and retries — all inside <code style="font-size:0.78rem;color:var(--accent)">withRetry()</code>. You never see the failure.</p>
-    </div>
-    <div class="how-card">
-      <span class="how-num">03</span>
-      <span class="how-icon">🛣️</span>
-      <h3>Provider Failover</h3>
-      <p>If an entire provider route breaks (404, 403, UPSTREAM_ERROR), AKM cascades to the next configured provider/model group automatically.</p>
-    </div>
-    <div class="how-card">
-      <span class="how-num">04</span>
-      <span class="how-icon">🧠</span>
-      <h3>Route Memory</h3>
-      <p>After a successful fallback, AKM remembers that route and prefers it on future calls. Smarter with every request.</p>
-    </div>
-    <div class="how-card">
-      <span class="how-num">05</span>
-      <span class="how-icon">🔒</span>
-      <h3>Secret Redaction</h3>
-      <p>API keys wrapped in <code style="font-size:0.78rem;color:var(--accent)">SecretString</code>. <code style="font-size:0.78rem;color:var(--accent)">console.log</code>, JSON, inspect — all show <code style="font-size:0.78rem;color:var(--red)">[REDACTED]</code>. Zero leaks.</p>
-    </div>
-    <div class="how-card">
-      <span class="how-num">06</span>
-      <span class="how-icon">📂</span>
-      <h3>State Persistence</h3>
-      <p>Non-secret state (key IDs, cooldowns, health) persists across restarts via <code style="font-size:0.78rem;color:var(--accent)">FileStateAdapter</code>. Raw keys never touch disk.</p>
-    </div>
-  </div>
-</section>
-
-<div class="divider"></div>
-
-<!-- ARCHITECTURE LEVELS -->
-<section id="levels">
-  <div class="section-label">Mental Model</div>
-  <h2 class="section-title">Two layers.<br>Total control.</h2>
-  <p class="section-body">
-    AKM thinks in two levels — providers and their keys. Each level has independent logic.
-  </p>
-
-  <div class="levels">
-
-    <!-- Provider Level -->
-    <div class="level">
-      <div class="level-header">
-        <div class="level-label">
-          <div class="level-num">L1</div>
-          <span class="level-name">Provider / Model Level</span>
-        </div>
-        <span class="level-tag">route failover</span>
-      </div>
-      <div class="level-body">
-        <p class="level-desc">
-          Each <strong>provider + model</strong> pair is a route. AKM tries routes in order, remembers which one works, and falls back if one breaks.
-          You can configure OpenRouter, Google, Vercel AI Gateway, or any custom endpoint side-by-side.
+        <p class="hero-sub">
+            <strong>AKM</strong> sits quietly in your backend and makes sure your LLM calls don't randomly collapse —
+            right when it matters. Smart rotation, auto-failover, zero proxy.
         </p>
-        <div class="key-row">
-          <div class="key-pill"><div class="key-status healthy"></div> openrouter / gemma-4</div>
-          <div class="key-pill"><div class="key-status healthy"></div> google / gemini-2.5-flash</div>
-          <div class="key-pill"><div class="key-status cooling"></div> vercel / claude-sonnet</div>
+
+        <div class="install-block">
+            <code><span>$</span> npm install <span style="color:var(--text)">ai-key-manager</span></code>
+            <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy install command">COPY</button>
         </div>
-      </div>
+
+        <div class="hero-actions">
+            <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-accent btn-large star-btn"
+                target="_blank" rel="noopener">
+                ★ Star on GitHub
+            </a>
+            <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-ghost btn-large" target="_blank"
+                rel="noopener">
+                View on npm
+            </a>
+            <a href="#code" class="btn btn-ghost btn-large">
+                See the code →
+            </a>
+        </div>
+
+        <div class="hero-badges">
+            <div class="badge"><span class="icon">🔒</span><strong>Zero Telemetry</strong> — local-first</div>
+            <div class="badge"><span class="icon">⚡</span><strong>Auto-Failover</strong> — across providers</div>
+            <div class="badge"><span class="icon">🔑</span><strong>Secrets Redacted</strong> — even in logs</div>
+            <div class="badge"><span class="icon">🧠</span><strong>Smart LRU</strong> — no manual rotation</div>
+        </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- THE PROBLEM -->
+    <div class="panic" id="problem">
+        <div style="margin-bottom:2rem">
+            <div class="section-label">The Problem</div>
+            <h2 class="section-title">It always happens<br>at the worst time.</h2>
+        </div>
+        <div class="panic-grid">
+            <div class="panic-card red-card">
+                <span class="panic-label bad">❌ Without AKM</span>
+                <div class="terminal">
+                    <div class="terminal-bar">
+                        <div class="dot r"></div>
+                        <div class="dot y"></div>
+                        <div class="dot g"></div>
+                    </div>
+                    <div class="terminal-body">
+                        <div class="line"><span class="t-dim"># Your demo, live, investors watching</span></div>
+                        <div class="line"><span class="t-blue">await</span> openai.<span
+                                class="t-yellow">chat</span>(...)</div>
+                        <div class="line">&nbsp;</div>
+                        <div class="line"><span class="t-red">Error 429: Rate limit exceeded</span></div>
+                        <div class="line"><span class="t-red">Retry after: 60s</span></div>
+                        <div class="line">&nbsp;</div>
+                        <div class="line"><span class="t-dim"># Silence.</span></div>
+                        <div class="line"><span class="t-dim"># Your key is cooling.</span></div>
+                        <div class="line"><span class="t-dim"># Demo is dead.</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="panic-card green-card">
+                <span class="panic-label good">✓ With AKM</span>
+                <div class="terminal">
+                    <div class="terminal-bar">
+                        <div class="dot r"></div>
+                        <div class="dot y"></div>
+                        <div class="dot g"></div>
+                    </div>
+                    <div class="terminal-body">
+                        <div class="line"><span class="t-dim"># Same demo. Different outcome.</span></div>
+                        <div class="line"><span class="t-blue">await</span> scheduler.<span
+                                class="t-green">withRetry</span>({</div>
+                        <div class="line">&nbsp;&nbsp;<span class="t-yellow">execute</span>: <span
+                                class="t-blue">async</span> ({ apiKey, model }) => {</div>
+                        <div class="line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="t-blue">return</span> callLLM({ apiKey,
+                            model })</div>
+                        <div class="line">&nbsp;&nbsp;}</div>
+                        <div class="line">})</div>
+                        <div class="line">&nbsp;</div>
+                        <div class="line"><span class="t-green">✓ Key-1 rate-limited → rotated to Key-2</span></div>
+                        <div class="line"><span class="t-green">✓ Response in 320ms</span></div>
+                        <div class="line"><span class="t-green">✓ Demo running smoothly.</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="panic-card" style="grid-column: 1 / -1;">
+                <p class="panic-text">
+                    <strong>One key hits limit → everything breaks.</strong> Fallback logic scattered everywhere.
+                    Retry logic = guesswork. Logs accidentally exposing secrets.
+                    You've been there. AKM fixes that entire layer — in one wrapper.
+                </p>
+            </div>
+        </div>
     </div>
 
-    <!-- Key Level -->
-    <div class="level">
-      <div class="level-header">
-        <div class="level-label">
-          <div class="level-num">L2</div>
-          <span class="level-name">Key Level (per provider)</span>
-        </div>
-        <span class="level-tag">LRU + cooldown heap</span>
-      </div>
-      <div class="level-body">
-        <p class="level-desc">
-          Each provider has multiple keys. AKM picks the least-recently-used healthy key, tracks health scores,
-          and moves rate-limited keys to a cooldown heap sorted by reset time.
-          Rate limits on one key never block another.
+    <div class="divider"></div>
+
+    <!-- HOW IT WORKS -->
+    <section id="how">
+        <div class="section-label">How It Works</div>
+        <h2 class="section-title">One wrapper.<br>Everything handled.</h2>
+        <p class="section-body">
+            You write only the generation logic. AKM handles key selection, retries, cooldowns, failover, and health
+            tracking automatically.
         </p>
-        <div class="key-row">
-          <div class="key-pill"><div class="key-status healthy"></div> or-a7f3 · healthy · 0ms ago</div>
-          <div class="key-pill"><div class="key-status cooling"></div> or-k2m9 · cooling · 38s left</div>
-          <div class="key-pill"><div class="key-status healthy"></div> or-q4x8 · healthy · 12s ago</div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Auto-pick -->
-    <div class="level" style="border-color: rgba(240,224,64,0.2); background: rgba(240,224,64,0.02);">
-      <div class="level-header">
-        <div class="level-label">
-          <div class="level-num" style="background:var(--accent)">✨</div>
-          <span class="level-name">Auto-Pick Mode</span>
+        <div class="how-grid">
+            <div class="how-card">
+                <span class="how-num">01</span>
+                <span class="how-icon">🎯</span>
+                <h3>Pick the Best Key</h3>
+                <p>Greedy LRU selection picks the least-recently-used healthy key. Rate-limited keys cool in a min-heap
+                    and return to pool automatically.</p>
+            </div>
+            <div class="how-card">
+                <span class="how-num">02</span>
+                <span class="how-icon">🔄</span>
+                <h3>Auto-Rotate on 429</h3>
+                <p>Hit a rate limit? AKM marks that key, rotates to the next healthy one, and retries — all inside <code
+                        style="font-size:0.78rem;color:var(--accent)">withRetry()</code>. You never see the failure.</p>
+            </div>
+            <div class="how-card">
+                <span class="how-num">03</span>
+                <span class="how-icon">🛣️</span>
+                <h3>Provider Failover</h3>
+                <p>If an entire provider route breaks (404, 403, UPSTREAM_ERROR), AKM cascades to the next configured
+                    provider/model group automatically.</p>
+            </div>
+            <div class="how-card">
+                <span class="how-num">04</span>
+                <span class="how-icon">🧠</span>
+                <h3>Route Memory</h3>
+                <p>After a successful fallback, AKM remembers that route and prefers it on future calls. Smarter with
+                    every request.</p>
+            </div>
+            <div class="how-card">
+                <span class="how-num">05</span>
+                <span class="how-icon">🔒</span>
+                <h3>Secret Redaction</h3>
+                <p>API keys wrapped in <code style="font-size:0.78rem;color:var(--accent)">SecretString</code>. <code
+                        style="font-size:0.78rem;color:var(--accent)">console.log</code>, JSON, inspect — all show <code
+                        style="font-size:0.78rem;color:var(--red)">[REDACTED]</code>. Zero leaks.</p>
+            </div>
+            <div class="how-card">
+                <span class="how-num">06</span>
+                <span class="how-icon">📂</span>
+                <h3>State Persistence</h3>
+                <p>Non-secret state (key IDs, cooldowns, health) persists across restarts via <code
+                        style="font-size:0.78rem;color:var(--accent)">FileStateAdapter</code>. Raw keys never touch
+                    disk.</p>
+            </div>
         </div>
-        <span class="level-tag" style="color:var(--accent)">zero config selection</span>
-      </div>
-      <div class="level-body">
-        <p class="level-desc">
-          Don't specify any provider or model. AKM tries all configured groups in order, cascading on failure.
-          The simplest way — and the most resilient.
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ARCHITECTURE LEVELS -->
+    <section id="levels">
+        <div class="section-label">Mental Model</div>
+        <h2 class="section-title">Two layers.<br>Total control.</h2>
+        <p class="section-body">
+            AKM thinks in two levels — providers and their keys. Each level has independent logic.
         </p>
-        <div class="terminal" style="margin-top:0.5rem">
-          <div class="terminal-body">
-            <div class="line"><span class="t-blue">const</span> <span class="t-yellow">result</span> = <span class="t-blue">await</span> scheduler.<span class="t-green">withRetry</span>({</div>
-            <div class="line">&nbsp;&nbsp;<span class="t-dim">// No provider. No model. Just the logic.</span></div>
-            <div class="line">&nbsp;&nbsp;<span class="t-yellow">execute</span>: <span class="t-blue">async</span> ({ apiKey, provider, model }) => {</div>
-            <div class="line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="t-blue">return</span> callLLM({ apiKey, provider, model, prompt })</div>
-            <div class="line">&nbsp;&nbsp;}</div>
-            <div class="line">})</div>
-          </div>
+
+        <div class="levels">
+
+            <!-- Provider Level -->
+            <div class="level">
+                <div class="level-header">
+                    <div class="level-label">
+                        <div class="level-num">L1</div>
+                        <span class="level-name">Provider / Model Level</span>
+                    </div>
+                    <span class="level-tag">route failover</span>
+                </div>
+                <div class="level-body">
+                    <p class="level-desc">
+                        Each <strong>provider + model</strong> pair is a route. AKM tries routes in order, remembers
+                        which one works, and falls back if one breaks.
+                        You can configure OpenRouter, Google, Vercel AI Gateway, or any custom endpoint side-by-side.
+                    </p>
+                    <div class="key-row">
+                        <div class="key-pill">
+                            <div class="key-status healthy"></div> openrouter / gemma-4
+                        </div>
+                        <div class="key-pill">
+                            <div class="key-status healthy"></div> google / gemini-2.5-flash
+                        </div>
+                        <div class="key-pill">
+                            <div class="key-status cooling"></div> vercel / claude-sonnet
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Key Level -->
+            <div class="level">
+                <div class="level-header">
+                    <div class="level-label">
+                        <div class="level-num">L2</div>
+                        <span class="level-name">Key Level (per provider)</span>
+                    </div>
+                    <span class="level-tag">LRU + cooldown heap</span>
+                </div>
+                <div class="level-body">
+                    <p class="level-desc">
+                        Each provider has multiple keys. AKM picks the least-recently-used healthy key, tracks health
+                        scores,
+                        and moves rate-limited keys to a cooldown heap sorted by reset time.
+                        Rate limits on one key never block another.
+                    </p>
+                    <div class="key-row">
+                        <div class="key-pill">
+                            <div class="key-status healthy"></div> or-a7f3 · healthy · 0ms ago
+                        </div>
+                        <div class="key-pill">
+                            <div class="key-status cooling"></div> or-k2m9 · cooling · 38s left
+                        </div>
+                        <div class="key-pill">
+                            <div class="key-status healthy"></div> or-q4x8 · healthy · 12s ago
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-pick -->
+            <div class="level" style="border-color: rgba(240,224,64,0.2); background: rgba(240,224,64,0.02);">
+                <div class="level-header">
+                    <div class="level-label">
+                        <div class="level-num" style="background:var(--accent)">✨</div>
+                        <span class="level-name">Auto-Pick Mode</span>
+                    </div>
+                    <span class="level-tag" style="color:var(--accent)">zero config selection</span>
+                </div>
+                <div class="level-body">
+                    <p class="level-desc">
+                        Don't specify any provider or model. AKM tries all configured groups in order, cascading on
+                        failure.
+                        The simplest way — and the most resilient.
+                    </p>
+                    <div class="terminal" style="margin-top:0.5rem">
+                        <div class="terminal-body">
+                            <div class="line"><span class="t-blue">const</span> <span class="t-yellow">result</span> =
+                                <span class="t-blue">await</span> scheduler.<span class="t-green">withRetry</span>({
+                            </div>
+                            <div class="line">&nbsp;&nbsp;<span class="t-dim">// No provider. No model. Just the
+                                    logic.</span></div>
+                            <div class="line">&nbsp;&nbsp;<span class="t-yellow">execute</span>: <span
+                                    class="t-blue">async</span> ({ apiKey, provider, model }) => {</div>
+                            <div class="line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="t-blue">return</span> callLLM({
+                                apiKey, provider, model, prompt })</div>
+                            <div class="line">&nbsp;&nbsp;}</div>
+                            <div class="line">})</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </div>
-      </div>
-    </div>
+    </section>
 
-  </div>
-</section>
+    <div class="divider"></div>
 
-<div class="divider"></div>
+    <!-- FEATURES -->
+    <section id="features">
+        <div class="section-label">Features</div>
+        <h2 class="section-title">Everything you'd have<br>to build yourself.</h2>
+        <p class="section-body">93 tests. Battle-tested. Every edge case covered.</p>
 
-<!-- FEATURES -->
-<section id="features">
-  <div class="section-label">Features</div>
-  <h2 class="section-title">Everything you'd have<br>to build yourself.</h2>
-  <p class="section-body">93 tests. Battle-tested. Every edge case covered.</p>
+        <div class="features-grid">
+            <div class="feature-card">
+                <span class="feature-icon">🔁</span>
+                <h3>Rate-Limit Aware Cooldowns</h3>
+                <p>Detects 429, "rate limit", "quota", "exhausted" — marks key, waits for cooldown, retries
+                    automatically. Uses a min-heap for O(log n) scheduling.</p>
+                <span class="tag">auto-retry</span>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">🛡️</span>
+                <h3>SecretString Redaction</h3>
+                <p>Every API key is wrapped in <code style="font-size:0.78rem;color:var(--accent)">SecretString</code>.
+                    It redacts itself in console.log, JSON.stringify, String(), and util.inspect. Only <code
+                        style="font-size:0.78rem;color:var(--accent)">.value()</code> reveals it.</p>
+                <span class="tag">security</span>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">⚡</span>
+                <h3>Provider Cascade</h3>
+                <p>Route fails with UPSTREAM_ERROR, 404, or blacklist? AKM automatically tries the next configured
+                    provider/model group. No manual fallback logic needed.</p>
+                <span class="tag">failover</span>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">🧠</span>
+                <h3>Health Score Tie-Breaking</h3>
+                <p>Keys degrade on rate limits and recover on success. When multiple keys are equal in LRU, health score
+                    breaks the tie — always picks the most reliable key.</p>
+                <span class="tag">intelligence</span>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">🌊</span>
+                <h3>Stream Support</h3>
+                <p>Use <code style="font-size:0.78rem;color:var(--accent)">withStreamRetry()</code> for SSE/streaming.
+                    Retries only on startup failures — never mid-stream. Keys marked healthy once the stream begins.</p>
+                <span class="tag">streaming</span>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">🚫</span>
+                <h3>AbortSignal Support</h3>
+                <p>Pass an <code style="font-size:0.78rem;color:var(--accent)">AbortSignal</code> to cancel at any point
+                    — before acquire, during execute, or while waiting for cooldown. Throws <code
+                        style="font-size:0.78rem;color:var(--accent)">RetryAbortedError</code>.</p>
+                <span class="tag">control</span>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">💾</span>
+                <h3>File State Persistence</h3>
+                <p>Cooldowns and health survive restarts via <code
+                        style="font-size:0.78rem;color:var(--accent)">FileStateAdapter</code>. Atomic write (temp +
+                    rename). Only non-secret metadata stored — never raw keys.</p>
+                <span class="tag">persistence</span>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">🔏</span>
+                <h3>HMAC Key Identity</h3>
+                <p>Enable identity checks so AKM detects swapped environment variables after restart. Stores only an
+                    HMAC fingerprint — never the key or secret.</p>
+                <span class="tag">optional</span>
+            </div>
+        </div>
+    </section>
 
-  <div class="features-grid">
-    <div class="feature-card">
-      <span class="feature-icon">🔁</span>
-      <h3>Rate-Limit Aware Cooldowns</h3>
-      <p>Detects 429, "rate limit", "quota", "exhausted" — marks key, waits for cooldown, retries automatically. Uses a min-heap for O(log n) scheduling.</p>
-      <span class="tag">auto-retry</span>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🛡️</span>
-      <h3>SecretString Redaction</h3>
-      <p>Every API key is wrapped in <code style="font-size:0.78rem;color:var(--accent)">SecretString</code>. It redacts itself in console.log, JSON.stringify, String(), and util.inspect. Only <code style="font-size:0.78rem;color:var(--accent)">.value()</code> reveals it.</p>
-      <span class="tag">security</span>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">⚡</span>
-      <h3>Provider Cascade</h3>
-      <p>Route fails with UPSTREAM_ERROR, 404, or blacklist? AKM automatically tries the next configured provider/model group. No manual fallback logic needed.</p>
-      <span class="tag">failover</span>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🧠</span>
-      <h3>Health Score Tie-Breaking</h3>
-      <p>Keys degrade on rate limits and recover on success. When multiple keys are equal in LRU, health score breaks the tie — always picks the most reliable key.</p>
-      <span class="tag">intelligence</span>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🌊</span>
-      <h3>Stream Support</h3>
-      <p>Use <code style="font-size:0.78rem;color:var(--accent)">withStreamRetry()</code> for SSE/streaming. Retries only on startup failures — never mid-stream. Keys marked healthy once the stream begins.</p>
-      <span class="tag">streaming</span>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🚫</span>
-      <h3>AbortSignal Support</h3>
-      <p>Pass an <code style="font-size:0.78rem;color:var(--accent)">AbortSignal</code> to cancel at any point — before acquire, during execute, or while waiting for cooldown. Throws <code style="font-size:0.78rem;color:var(--accent)">RetryAbortedError</code>.</p>
-      <span class="tag">control</span>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">💾</span>
-      <h3>File State Persistence</h3>
-      <p>Cooldowns and health survive restarts via <code style="font-size:0.78rem;color:var(--accent)">FileStateAdapter</code>. Atomic write (temp + rename). Only non-secret metadata stored — never raw keys.</p>
-      <span class="tag">persistence</span>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🔏</span>
-      <h3>HMAC Key Identity</h3>
-      <p>Enable identity checks so AKM detects swapped environment variables after restart. Stores only an HMAC fingerprint — never the key or secret.</p>
-      <span class="tag">optional</span>
-    </div>
-  </div>
-</section>
+    <div class="divider"></div>
 
-<div class="divider"></div>
+    <!-- CODE EXAMPLES -->
+    <section id="code">
+        <div class="section-label">Code</div>
+        <h2 class="section-title">Three lines of setup.<br>One wrapper. Done.</h2>
+        <p class="section-body">Works with any AI SDK — LangChain, Vercel AI, raw fetch, Anthropic SDK, anything.</p>
 
-<!-- CODE EXAMPLES -->
-<section id="code">
-  <div class="section-label">Code</div>
-  <h2 class="section-title">Three lines of setup.<br>One wrapper. Done.</h2>
-  <p class="section-body">Works with any AI SDK — LangChain, Vercel AI, raw fetch, Anthropic SDK, anything.</p>
+        <div class="code-tabs">
+            <div class="tab-bar">
+                <button class="tab active" onclick="switchTab(this,'tab-setup')">Setup</button>
+                <button class="tab" onclick="switchTab(this,'tab-auto')">Auto-Pick</button>
+                <button class="tab" onclick="switchTab(this,'tab-targeted')">Targeted</button>
+                <button class="tab" onclick="switchTab(this,'tab-langchain')">LangChain</button>
+                <button class="tab" onclick="switchTab(this,'tab-vercel')">Vercel AI</button>
+            </div>
 
-  <div class="code-tabs">
-    <div class="tab-bar">
-      <button class="tab active" onclick="switchTab(this,'tab-setup')">Setup</button>
-      <button class="tab" onclick="switchTab(this,'tab-auto')">Auto-Pick</button>
-      <button class="tab" onclick="switchTab(this,'tab-targeted')">Targeted</button>
-      <button class="tab" onclick="switchTab(this,'tab-langchain')">LangChain</button>
-      <button class="tab" onclick="switchTab(this,'tab-vercel')">Vercel AI</button>
-    </div>
-
-    <div id="tab-setup" class="tab-content active">
-<pre><span class="k">import</span> { <span class="n">KeyScheduler</span>, <span class="n">FileStateAdapter</span> } <span class="k">from</span> <span class="s">"ai-key-manager"</span>
+            <div id="tab-setup" class="tab-content active">
+                <pre><span class="k">import</span> { <span class="n">KeyScheduler</span>, <span class="n">FileStateAdapter</span> } <span class="k">from</span> <span class="s">"ai-key-manager"</span>
 
 <span class="k">const</span> <span class="n">scheduler</span> = <span class="k">new</span> <span class="t">KeyScheduler</span>({
   providers: [
@@ -1368,10 +1639,10 @@
   ],
   state: <span class="k">new</span> <span class="t">FileStateAdapter</span>(<span class="s">".llm-key-state.json"</span>)
 })</pre>
-    </div>
+            </div>
 
-    <div id="tab-auto" class="tab-content">
-<pre><span class="c">// Auto-pick: no provider/model needed.</span>
+            <div id="tab-auto" class="tab-content">
+                <pre><span class="c">// Auto-pick: no provider/model needed.</span>
 <span class="c">// AKM picks the best available group and cascades on failure.</span>
 
 <span class="k">const</span> <span class="n">result</span> = <span class="k">await</span> scheduler.<span class="f">withRetry</span>({
@@ -1380,10 +1651,10 @@
     <span class="k">return</span> <span class="f">generateContent</span>({ apiKey, provider, model, prompt, signal })
   }
 })</pre>
-    </div>
+            </div>
 
-    <div id="tab-targeted" class="tab-content">
-<pre><span class="c">// Targeted: start with a specific route, auto-fallback if it breaks</span>
+            <div id="tab-targeted" class="tab-content">
+                <pre><span class="c">// Targeted: start with a specific route, auto-fallback if it breaks</span>
 
 <span class="k">const</span> <span class="n">result</span> = <span class="k">await</span> scheduler.<span class="f">withRetry</span>({
   provider: <span class="s">"openrouter"</span>,
@@ -1398,10 +1669,10 @@
     <span class="k">return</span> <span class="f">callSDK</span>({ apiKey, provider, model, prompt })
   }
 })</pre>
-    </div>
+            </div>
 
-    <div id="tab-langchain" class="tab-content">
-<pre><span class="k">import</span> { <span class="n">ChatOpenAI</span> } <span class="k">from</span> <span class="s">"@langchain/openai"</span>
+            <div id="tab-langchain" class="tab-content">
+                <pre><span class="k">import</span> { <span class="n">ChatOpenAI</span> } <span class="k">from</span> <span class="s">"@langchain/openai"</span>
 <span class="k">import</span> { <span class="n">KeyScheduler</span> } <span class="k">from</span> <span class="s">"ai-key-manager"</span>
 
 <span class="k">export async function</span> <span class="f">askWithLangChain</span>(scheduler, prompt) {
@@ -1418,10 +1689,10 @@
     }
   })
 }</pre>
-    </div>
+            </div>
 
-    <div id="tab-vercel" class="tab-content">
-<pre><span class="k">import</span> { <span class="n">generateText</span> } <span class="k">from</span> <span class="s">"ai"</span>
+            <div id="tab-vercel" class="tab-content">
+                <pre><span class="k">import</span> { <span class="n">generateText</span> } <span class="k">from</span> <span class="s">"ai"</span>
 <span class="k">import</span> { <span class="n">createOpenAICompatible</span> } <span class="k">from</span> <span class="s">"@ai-sdk/openai-compatible"</span>
 <span class="k">import</span> { <span class="n">KeyScheduler</span> } <span class="k">from</span> <span class="s">"ai-key-manager"</span>
 
@@ -1441,207 +1712,211 @@
     }
   })
 }</pre>
+            </div>
+        </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- FOR WHO -->
+    <section id="for-who">
+        <div class="section-label">Built For</div>
+        <h2 class="section-title">Anyone who can't afford<br>a failed request.</h2>
+        <p class="section-body">
+            Whether you're shipping in 48 hours or in production — AKM keeps your AI layer stable.
+        </p>
+
+        <div class="audience-grid">
+            <div class="audience-card">
+                <span class="audience-emoji">🏗️</span>
+                <h3>MVP Builders</h3>
+                <p>Ship fast without worrying about rate limits breaking your demo at 2am.</p>
+            </div>
+            <div class="audience-card">
+                <span class="audience-emoji">🏆</span>
+                <h3>Hackathon Teams</h3>
+                <p>Judge demos never fail. Multiple keys, multiple providers — fully covered.</p>
+            </div>
+            <div class="audience-card">
+                <span class="audience-emoji">🎓</span>
+                <h3>Students & Researchers</h3>
+                <p>Free tier keys spread intelligently. Never lose an experiment to a 429.</p>
+            </div>
+            <div class="audience-card">
+                <span class="audience-emoji">🚀</span>
+                <h3>Indie Hackers</h3>
+                <p>Multi-provider setups managed automatically. Focus on the product, not the plumbing.</p>
+            </div>
+        </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- COMPARISON -->
+    <section id="compare">
+        <div class="section-label">Why AKM</div>
+        <h2 class="section-title">vs. rolling your own.</h2>
+        <p class="section-body">Everything you'd eventually build, tested and shipped.</p>
+
+        <table class="compare-table" aria-label="Feature comparison">
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th class="akm-col">AKM ✨</th>
+                    <th>DIY</th>
+                    <th>AI Proxy</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>LRU key selection</td>
+                    <td class="check">✓ Built-in</td>
+                    <td class="cross">✗ You write it</td>
+                    <td class="partial">~ Maybe</td>
+                </tr>
+                <tr>
+                    <td>Rate-limit cooldown heap</td>
+                    <td class="check">✓ Min-heap, O(log n)</td>
+                    <td class="cross">✗ setTimeout hacks</td>
+                    <td class="partial">~ Basic</td>
+                </tr>
+                <tr>
+                    <td>Provider failover cascade</td>
+                    <td class="check">✓ Automatic</td>
+                    <td class="cross">✗ Nested try/catch</td>
+                    <td class="partial">~ Varies</td>
+                </tr>
+                <tr>
+                    <td>Secret redaction in logs</td>
+                    <td class="check">✓ SecretString</td>
+                    <td class="cross">✗ Oops</td>
+                    <td class="cross">✗ Rarely</td>
+                </tr>
+                <tr>
+                    <td>State persistence across restarts</td>
+                    <td class="check">✓ FileStateAdapter</td>
+                    <td class="cross">✗ Cold start every time</td>
+                    <td class="partial">~ Depends</td>
+                </tr>
+                <tr>
+                    <td>Zero network calls / telemetry</td>
+                    <td class="check">✓ 100% local</td>
+                    <td class="check">✓ If you build right</td>
+                    <td class="cross">✗ Your keys travel</td>
+                </tr>
+                <tr>
+                    <td>Works with any SDK</td>
+                    <td class="check">✓ SDK-agnostic</td>
+                    <td class="partial">~ Per SDK</td>
+                    <td class="cross">✗ Locked in</td>
+                </tr>
+                <tr>
+                    <td>93 battle tests</td>
+                    <td class="check">✓ Shipped</td>
+                    <td class="cross">✗ Who has time</td>
+                    <td class="partial">~ Unknown</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- CTA -->
+    <div class="cta-section">
+        <div class="cta-glow"></div>
+        <div class="cta-inner">
+            <h2>Stop losing demos<br>to rate limits.</h2>
+            <p>Add AKM to your backend in 5 minutes. No proxy. No platform. No lock-in.</p>
+            <div class="cta-btns">
+                <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-accent btn-large" target="_blank"
+                    rel="noopener">★ Star on GitHub</a>
+                <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-ghost btn-large" target="_blank"
+                    rel="noopener">View on npm</a>
+            </div>
+            <div style="margin-top:1.5rem">
+                <div class="install-block" style="max-width:340px;margin:0 auto;animation:none;box-shadow:none;">
+                    <code><span>$</span> npm i <span style="color:var(--text)">ai-key-manager</span></code>
+                    <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy">COPY</button>
+                </div>
+            </div>
+        </div>
     </div>
-  </div>
-</section>
 
-<div class="divider"></div>
+    <!-- FOOTER -->
+    <footer>
+        <div class="footer-left">
+            <a href="#" class="footer-logo">AKM</a>
+            <span class="footer-note">Rate-limit aware API key scheduling · v0.3.1 · MIT</span>
+        </div>
+        <div class="footer-links">
+            <a href="https://github.com/Amon20044/AI-Key-Scheduler" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://www.npmjs.com/package/ai-key-manager" target="_blank" rel="noopener">npm</a>
+            <a href="https://github.com/Amon20044/AI-Key-Scheduler/blob/main/SECURITY.md" target="_blank"
+                rel="noopener">Security</a>
+            <a href="https://github.com/Amon20044/AI-Key-Scheduler/blob/main/CHANGELOG.md" target="_blank"
+                rel="noopener">Changelog</a>
+        </div>
+    </footer>
 
-<!-- FOR WHO -->
-<section id="for-who">
-  <div class="section-label">Built For</div>
-  <h2 class="section-title">Anyone who can't afford<br>a failed request.</h2>
-  <p class="section-body">
-    Whether you're shipping in 48 hours or in production — AKM keeps your AI layer stable.
-  </p>
+    <script>
+        // Copy to clipboard
+        function copyInstall(btn) {
+            navigator.clipboard.writeText('npm install ai-key-manager').then(() => {
+                const orig = btn.textContent;
+                btn.textContent = 'COPIED!';
+                btn.style.color = 'var(--green)';
+                setTimeout(() => {
+                    btn.textContent = orig;
+                    btn.style.color = '';
+                }, 1800);
+            });
+        }
 
-  <div class="audience-grid">
-    <div class="audience-card">
-      <span class="audience-emoji">🏗️</span>
-      <h3>MVP Builders</h3>
-      <p>Ship fast without worrying about rate limits breaking your demo at 2am.</p>
-    </div>
-    <div class="audience-card">
-      <span class="audience-emoji">🏆</span>
-      <h3>Hackathon Teams</h3>
-      <p>Judge demos never fail. Multiple keys, multiple providers — fully covered.</p>
-    </div>
-    <div class="audience-card">
-      <span class="audience-emoji">🎓</span>
-      <h3>Students & Researchers</h3>
-      <p>Free tier keys spread intelligently. Never lose an experiment to a 429.</p>
-    </div>
-    <div class="audience-card">
-      <span class="audience-emoji">🚀</span>
-      <h3>Indie Hackers</h3>
-      <p>Multi-provider setups managed automatically. Focus on the product, not the plumbing.</p>
-    </div>
-  </div>
-</section>
+        // Tab switching
+        function switchTab(btn, id) {
+            const bar = btn.closest('.tab-bar');
+            bar.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            btn.classList.add('active');
+            const wrap = bar.closest('.code-tabs');
+            wrap.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            wrap.querySelector('#' + id).classList.add('active');
+        }
 
-<div class="divider"></div>
+        // Intersection observer for subtle fade-in
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(e => {
+                if (e.isIntersecting) {
+                    e.target.style.opacity = '1';
+                    e.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, { threshold: 0.1 });
 
-<!-- COMPARISON -->
-<section id="compare">
-  <div class="section-label">Why AKM</div>
-  <h2 class="section-title">vs. rolling your own.</h2>
-  <p class="section-body">Everything you'd eventually build, tested and shipped.</p>
+        document.querySelectorAll('.how-card, .feature-card, .audience-card, .level').forEach(el => {
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(20px)';
+            el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            observer.observe(el);
+        });
 
-  <table class="compare-table" aria-label="Feature comparison">
-    <thead>
-      <tr>
-        <th>Feature</th>
-        <th class="akm-col">AKM ✨</th>
-        <th>DIY</th>
-        <th>AI Proxy</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>LRU key selection</td>
-        <td class="check">✓ Built-in</td>
-        <td class="cross">✗ You write it</td>
-        <td class="partial">~ Maybe</td>
-      </tr>
-      <tr>
-        <td>Rate-limit cooldown heap</td>
-        <td class="check">✓ Min-heap, O(log n)</td>
-        <td class="cross">✗ setTimeout hacks</td>
-        <td class="partial">~ Basic</td>
-      </tr>
-      <tr>
-        <td>Provider failover cascade</td>
-        <td class="check">✓ Automatic</td>
-        <td class="cross">✗ Nested try/catch</td>
-        <td class="partial">~ Varies</td>
-      </tr>
-      <tr>
-        <td>Secret redaction in logs</td>
-        <td class="check">✓ SecretString</td>
-        <td class="cross">✗ Oops</td>
-        <td class="cross">✗ Rarely</td>
-      </tr>
-      <tr>
-        <td>State persistence across restarts</td>
-        <td class="check">✓ FileStateAdapter</td>
-        <td class="cross">✗ Cold start every time</td>
-        <td class="partial">~ Depends</td>
-      </tr>
-      <tr>
-        <td>Zero network calls / telemetry</td>
-        <td class="check">✓ 100% local</td>
-        <td class="check">✓ If you build right</td>
-        <td class="cross">✗ Your keys travel</td>
-      </tr>
-      <tr>
-        <td>Works with any SDK</td>
-        <td class="check">✓ SDK-agnostic</td>
-        <td class="partial">~ Per SDK</td>
-        <td class="cross">✗ Locked in</td>
-      </tr>
-      <tr>
-        <td>93 battle tests</td>
-        <td class="check">✓ Shipped</td>
-        <td class="cross">✗ Who has time</td>
-        <td class="partial">~ Unknown</td>
-      </tr>
-    </tbody>
-  </table>
-</section>
+        // Smooth nav highlighting
+        const sections = document.querySelectorAll('section[id], div[id]');
+        const navLinks = document.querySelectorAll('.nav-links a');
 
-<div class="divider"></div>
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(s => {
+                if (window.scrollY >= s.offsetTop - 100) current = s.id;
+            });
+            navLinks.forEach(a => {
+                a.style.color = a.getAttribute('href') === '#' + current ? 'var(--text)' : '';
+            });
+        });
+    </script>
 
-<!-- CTA -->
-<div class="cta-section">
-  <div class="cta-glow"></div>
-  <div class="cta-inner">
-    <h2>Stop losing demos<br>to rate limits.</h2>
-    <p>Add AKM to your backend in 5 minutes. No proxy. No platform. No lock-in.</p>
-    <div class="cta-btns">
-      <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-accent btn-large" target="_blank" rel="noopener">★ Star on GitHub</a>
-      <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-ghost btn-large" target="_blank" rel="noopener">View on npm</a>
-    </div>
-    <div style="margin-top:1.5rem">
-      <div class="install-block" style="max-width:340px;margin:0 auto;animation:none;box-shadow:none;">
-        <code><span>$</span> npm i <span style="color:var(--text)">ai-key-manager</span></code>
-        <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy">COPY</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- FOOTER -->
-<footer>
-  <div class="footer-left">
-    <a href="#" class="footer-logo">AKM</a>
-    <span class="footer-note">Rate-limit aware API key scheduling · v0.3.1 · MIT</span>
-  </div>
-  <div class="footer-links">
-    <a href="https://github.com/Amon20044/AI-Key-Scheduler" target="_blank" rel="noopener">GitHub</a>
-    <a href="https://www.npmjs.com/package/ai-key-manager" target="_blank" rel="noopener">npm</a>
-    <a href="https://github.com/Amon20044/AI-Key-Scheduler/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
-    <a href="https://github.com/Amon20044/AI-Key-Scheduler/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
-  </div>
-</footer>
-
-<script>
-  // Copy to clipboard
-  function copyInstall(btn) {
-    navigator.clipboard.writeText('npm install ai-key-manager').then(() => {
-      const orig = btn.textContent;
-      btn.textContent = 'COPIED!';
-      btn.style.color = 'var(--green)';
-      setTimeout(() => {
-        btn.textContent = orig;
-        btn.style.color = '';
-      }, 1800);
-    });
-  }
-
-  // Tab switching
-  function switchTab(btn, id) {
-    const bar = btn.closest('.tab-bar');
-    bar.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    btn.classList.add('active');
-    const wrap = bar.closest('.code-tabs');
-    wrap.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    wrap.querySelector('#' + id).classList.add('active');
-  }
-
-  // Intersection observer for subtle fade-in
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (e.isIntersecting) {
-        e.target.style.opacity = '1';
-        e.target.style.transform = 'translateY(0)';
-      }
-    });
-  }, { threshold: 0.1 });
-
-  document.querySelectorAll('.how-card, .feature-card, .audience-card, .level').forEach(el => {
-    el.style.opacity = '0';
-    el.style.transform = 'translateY(20px)';
-    el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
-    observer.observe(el);
-  });
-
-  // Smooth nav highlighting
-  const sections = document.querySelectorAll('section[id], div[id]');
-  const navLinks = document.querySelectorAll('.nav-links a');
-
-  window.addEventListener('scroll', () => {
-    let current = '';
-    sections.forEach(s => {
-      if (window.scrollY >= s.offsetTop - 100) current = s.id;
-    });
-    navLinks.forEach(a => {
-      a.style.color = a.getAttribute('href') === '#' + current ? 'var(--text)' : '';
-    });
-  });
-</script>
-
-<!-- Structured data for SEO -->
-<script type="application/ld+json">
+    <!-- Structured data for SEO -->
+    <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
@@ -1663,4 +1938,5 @@
 </script>
 
 </body>
+
 </html>
