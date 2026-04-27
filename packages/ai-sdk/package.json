@@ -1,0 +1,55 @@
+{
+  "name": "@ai-key-scheduler/ai-sdk",
+  "version": "0.3.1",
+  "description": "Vercel AI SDK adapter for @ai-key-scheduler/core.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Amon20044/AI-Key-Scheduler.git",
+    "directory": "packages/ai-sdk"
+  },
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && tsc -p tsconfig.types.json && node ../../scripts/fix-cjs-extensions.cjs",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "vercel-ai-sdk",
+    "ai-sdk",
+    "api-keys",
+    "scheduler"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@ai-key-scheduler/core": "0.3.1"
+  },
+  "peerDependencies": {
+    "ai": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  }
+}

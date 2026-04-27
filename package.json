@@ -1,7 +1,8 @@
 {
-  "name": "ai-key-manager",
+  "name": "ai-key-scheduler-monorepo",
   "version": "0.3.1",
-  "description": "AI Key Manager: rate-limit aware API key scheduling across providers and models.",
+  "private": true,
+  "description": "AI Key Scheduler packages for rate-limit aware API key scheduling across providers and models.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Amon20044/AI-Key-Scheduler.git"
@@ -10,45 +11,21 @@
     "url": "https://github.com/Amon20044/AI-Key-Scheduler/issues"
   },
   "homepage": "https://github.com/Amon20044/AI-Key-Scheduler#readme",
-  "type": "module",
-  "main": "./dist/cjs/index.cjs",
-  "module": "./dist/esm/index.js",
-  "types": "./dist/types/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/types/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.cjs"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "SECURITY.md",
-    "LICENSE"
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "clean": "rimraf dist",
-    "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && tsc -p tsconfig.types.json && node scripts/fix-cjs-extensions.cjs",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "clean": "npm run clean --workspaces --if-present",
+    "build": "npm run build --workspace @ai-key-scheduler/core && npm run build --workspace @ai-key-scheduler/ai-sdk && npm run build --workspace @ai-key-scheduler/langchain",
+    "lint": "npm run lint --workspace @ai-key-scheduler/core && npm run lint --workspace @ai-key-scheduler/ai-sdk && npm run lint --workspace @ai-key-scheduler/langchain",
     "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run test:security && npm run build",
-    "test": "vitest run",
-    "test:security": "vitest run tests/security.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "npm run test --workspace @ai-key-scheduler/core && npm run test --workspace @ai-key-scheduler/ai-sdk && npm run test --workspace @ai-key-scheduler/langchain",
+    "test:security": "npm run test:security --workspace @ai-key-scheduler/core",
+    "typecheck": "npm run build --workspace @ai-key-scheduler/core && npm run typecheck --workspace @ai-key-scheduler/core && npm run typecheck --workspace @ai-key-scheduler/ai-sdk && npm run typecheck --workspace @ai-key-scheduler/langchain"
   },
   "engines": {
     "node": ">=18"
   },
-  "keywords": [
-    "ai-key-manager",
-    "rate-limit",
-    "api-keys",
-    "scheduler",
-    "ai",
-    "llm"
-  ],
-  "author": "",
-  "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.30",
     "rimraf": "^5.0.5",
