@@ -1,7 +1,7 @@
 {
-  "name": "@ai-key-scheduler/ai-sdk",
+  "name": "@ai-key-manager/ai-sdk",
   "version": "0.3.2",
-  "description": "Vercel AI SDK adapter for @ai-key-scheduler/core.",
+  "description": "Vercel AI SDK adapter for @ai-key-manager/core.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Amon20044/AI-Key-Scheduler.git",
@@ -42,7 +42,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@ai-key-scheduler/core": "0.3.2"
+    "@ai-key-manager/core": "0.3.2"
   },
   "peerDependencies": {
     "ai": ">=4.0.0"

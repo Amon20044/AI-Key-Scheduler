@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KeyScheduler, MemoryStateAdapter } from "@ai-key-scheduler/core";
+import { KeyScheduler, MemoryStateAdapter } from "@ai-key-manager/core";
 import { generateTextWithKey, streamTextWithKey } from "../src/index.js";
 
 function createScheduler(): KeyScheduler {

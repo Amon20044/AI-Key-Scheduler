@@ -1,5 +1,5 @@
 {
-  "name": "@ai-key-scheduler/core",
+  "name": "@ai-key-manager/core",
   "version": "0.3.2",
   "description": "Core scheduler, heap, LRU, cooldown, state, retry, and error handling for AI API keys.",
   "repository": {
@@ -36,7 +36,7 @@
     "node": ">=18"
   },
   "keywords": [
-    "ai-key-scheduler",
+    "@ai-key-manager/core",
     "rate-limit",
     "api-keys",
     "scheduler",

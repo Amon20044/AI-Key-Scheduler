@@ -1,7 +1,7 @@
 {
-  "name": "@ai-key-scheduler/langchain",
+  "name": "@ai-key-manager/langchain",
   "version": "0.3.2",
-  "description": "LangChain adapter for @ai-key-scheduler/core.",
+  "description": "LangChain adapter for @ai-key-manager/core.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Amon20044/AI-Key-Scheduler.git",
@@ -42,7 +42,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@ai-key-scheduler/core": "0.3.2"
+    "@ai-key-manager/core": "0.3.2"
   },
   "peerDependencies": {
     "@langchain/core": ">=0.2.0",

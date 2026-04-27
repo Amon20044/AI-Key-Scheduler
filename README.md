@@ -7,17 +7,17 @@ AI Key Scheduler is a local-first package family for apps that have multiple API
 ## Packages
 
 ```txt
-@ai-key-scheduler/core        scheduler, heap, LRU, cooldown, state, retry
-@ai-key-scheduler/ai-sdk      Vercel AI SDK adapter
-@ai-key-scheduler/langchain   LangChain adapter
+@ai-key-manager/core        scheduler, heap, LRU, cooldown, state, retry
+@ai-key-manager/ai-sdk      Vercel AI SDK adapter
+@ai-key-manager/langchain   LangChain adapter
 ```
 
 Install only what your app needs:
 
 ```sh
-npm install @ai-key-scheduler/core
-npm install @ai-key-scheduler/core @ai-key-scheduler/ai-sdk ai @ai-sdk/openai
-npm install @ai-key-scheduler/core @ai-key-scheduler/langchain @langchain/openai
+npm install @ai-key-manager/core
+npm install @ai-key-manager/core @ai-key-manager/ai-sdk ai @ai-sdk/openai
+npm install @ai-key-manager/core @ai-key-manager/langchain @langchain/openai
 ```
 
 The adapter packages keep AI SDK and LangChain packages as peer/user dependencies. They do not bundle provider SDKs into your app.
@@ -37,7 +37,7 @@ See [SECURITY.md](./SECURITY.md) for the full policy.
 ## Core Setup
 
 ```ts
-import { FileStateAdapter, KeyScheduler } from "@ai-key-scheduler/core";
+import { FileStateAdapter, KeyScheduler } from "@ai-key-manager/core";
 
 const scheduler = new KeyScheduler({
   providers: [
@@ -67,7 +67,7 @@ const scheduler = new KeyScheduler({
         { id: "gateway-d4j7", value: process.env.AI_GATEWAY_KEY_D4J7 }
       ]
     }
-  ],
+        `@ai-key-manager/core`, `@ai-key-manager/ai-sdk`, and `@ai-key-manager/langchain`.
   state: new FileStateAdapter(".llm-key-state.json")
 });
 ```
@@ -133,7 +133,7 @@ Use `generateTextWithKey()` or `streamTextWithKey()` when your app uses the Verc
 ```ts
 import { generateText } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateTextWithKey } from "@ai-key-scheduler/ai-sdk";
+import { generateTextWithKey } from "@ai-key-manager/ai-sdk";
 
 const { text } = await generateTextWithKey({
   scheduler,
@@ -159,7 +159,7 @@ Streaming follows the same shape:
 
 ```ts
 import { streamText } from "ai";
-import { streamTextWithKey } from "@ai-key-scheduler/ai-sdk";
+import { streamTextWithKey } from "@ai-key-manager/ai-sdk";
 
 const stream = await streamTextWithKey({
   scheduler,
@@ -183,7 +183,7 @@ Use `invokeWithKey()` for normal LangChain calls:
 
 ```ts
 import { ChatOpenAI } from "@langchain/openai";
-import { invokeWithKey } from "@ai-key-scheduler/langchain";
+import { invokeWithKey } from "@ai-key-manager/langchain";
 
 const response = await invokeWithKey({
   scheduler,
@@ -204,7 +204,7 @@ const response = await invokeWithKey({
 Use `streamWithKey()` when the model exposes `stream()`:
 
 ```ts
-import { streamWithKey } from "@ai-key-scheduler/langchain";
+import { streamWithKey } from "@ai-key-manager/langchain";
 
 const stream = await streamWithKey({
   scheduler,
@@ -236,7 +236,7 @@ The package does not bundle LangChain. Your app owns the LangChain and provider 
 ## State Adapters
 
 ```ts
-import { FileStateAdapter, MemoryStateAdapter } from "@ai-key-scheduler/core";
+import { FileStateAdapter, MemoryStateAdapter } from "@ai-key-manager/core";
 ```
 
 - `MemoryStateAdapter`: in-memory state for tests or short-lived processes.
@@ -245,7 +245,7 @@ import { FileStateAdapter, MemoryStateAdapter } from "@ai-key-scheduler/core";
 Custom adapter:
 
 ```ts
-import type { PersistedSchedulerState, StateAdapter } from "@ai-key-scheduler/core";
+import type { PersistedSchedulerState, StateAdapter } from "@ai-key-manager/core";
 
 class RedisStateAdapter implements StateAdapter {
   async load(): Promise<PersistedSchedulerState | undefined> {
@@ -279,7 +279,7 @@ The scheduler stores only an HMAC fingerprint, never the raw key or HMAC secret.
 ### v0.3.2
 
 - Split the project into npm workspaces:
-  `@ai-key-scheduler/core`, `@ai-key-scheduler/ai-sdk`, and `@ai-key-scheduler/langchain`.
+  `@ai-key-manager/core`, `@ai-key-manager/ai-sdk`, and `@ai-key-manager/langchain`.
 - Added Vercel AI SDK adapter helpers: `generateTextWithKey()`, `streamTextWithKey()`, and shared `callWithKey()`.
 - Added LangChain adapter helpers: `invokeWithKey()` and `streamWithKey()`.
 - Added adapter smoke tests proving Vercel-style, LangChain-style, streaming, and custom wrapper usage works without bundling peer SDKs.

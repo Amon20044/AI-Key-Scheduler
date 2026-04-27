@@ -1,4 +1,4 @@
-import type { KeyExecutionContext, KeyScheduler, WithKeyRetryOptions } from "@ai-key-scheduler/core";
+import type { KeyExecutionContext, KeyScheduler, WithKeyRetryOptions } from "@ai-key-manager/core";
 
 type MaybePromise<T> = T | Promise<T>;
 type ProviderRoute = Pick<WithKeyRetryOptions<unknown>, "provider" | "model" | "fallbacks">;
