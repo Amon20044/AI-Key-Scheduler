@@ -24,87 +24,85 @@ Package:
 - install: npm install ai-key-manager
 - GitHub: https://github.com/Amon20044/AI-Key-Scheduler
 
-What it does:
-- Manages multiple AI providers, models, and API keys.
-- Groups keys by provider + model.
-- Selects the least recently used available key.
-- Moves rate-limited keys into cooldown.
-- Uses Retry-After when available; otherwise uses the provider default cooldown.
-- Provides `scheduler.withRetry()` / `withKeyRetry()` to wrap LangChain, Vercel AI SDK, or any custom generation function.
-- Retries retryable AI errors across the total number of keys configured for that provider/model.
-- Uses a 60 second default retry deadline and waits for cooling keys only when their reset is inside that deadline.
-- Falls back to other configured provider/model groups for route failures like UPSTREAM_ERROR, NOT_FOUND, model-not-found, or unsupported generateContent errors.
-- Remembers the last successful fallback route in-memory for each requested provider/model and prefers it on later calls.
-- Treats blacklisted or blocked route errors (for example provider-level 403/FORBIDDEN with blacklist/blocked signals) as fallback-safe.
-- Supports AbortSignal, SSE/start-stream startup retry, health-aware key tie-breaking, and optional HMAC key identity checks.
-- Persists only non-secret scheduling state if FileStateAdapter is used.
-- Keeps raw API keys local and wrapped in SecretString.
-- Makes no telemetry or external network calls by itself.
+Core concept:
+The developer NEVER manually acquires or releases keys. The `scheduler.withRetry()` wrapper does everything:
+- Acquires a key from the scheduler.
+- Injects `{ provider, model, apiKey }` into the `execute` callback.
+- On rate-limit errors (429/quota/exhausted): marks the key as rate-limited, picks the next key, retries.
+- On route errors (UPSTREAM_ERROR/NOT_FOUND/403/blacklisted): falls back to another configured provider/model group entirely.
+- On success: marks the key healthy and returns the result.
+- On non-retryable errors: releases the key and rethrows.
 
-How to use it:
-1. Import `KeyScheduler`, `FileStateAdapter` or `MemoryStateAdapter`, and `isRateLimitError` from `ai-key-manager`.
-2. Configure providers with stable key IDs and API key values from environment variables.
-3. Prefer wrapping AI calls with:
-   `await scheduler.withRetry({ provider, model, execute, signal })`
-4. For SSE/start-stream calls, use:
-   `await scheduler.withStreamRetry({ provider, model, execute, signal })`
-5. Inside `execute`, pass the current route and key to the provider SDK using:
-   `provider`, `model`, and `apiKey`
-6. Keep fallback enabled for MVP-safe routing, or set `fallbacks: false` / an explicit fallback list for stricter production control.
-7. The wrapper automatically calls `success()`, `rateLimited()`, or `release()`.
-8. It treats 429, rate-limit, quota, and exhausted-key messages as retryable.
-9. It throws safe package errors when attempts, timeout, abort, or route fallback exhaustion stop the retry loop.
+The developer writes ONLY the generation logic inside `execute`. The wrapper manages provider, model, apiKey, retries, cooldowns, and failover.
 
-Manual flow:
-1. Before calling the AI SDK, call:
-   `const lease = await scheduler.acquire({ provider, model })`
-2. Pass the real key to the provider SDK using:
-   `lease.key.secret.value()`
-3. If the provider request succeeds, call:
-   `await lease.success()`
-4. If the provider returns a rate-limit error, call:
-   `await lease.rateLimited({ retryAfter })`
-5. For any other error, call:
-   `await lease.release()`
+Setup pattern:
 
-Security rules:
-- Never log `lease.key.secret.value()`.
-- Never hardcode API keys in source code.
-- Load keys from env vars or a secret manager.
-- Do not persist raw API key values.
-- Do not send keys, prompts, responses, headers, or metadata to any service except the provider SDK call the user explicitly requested.
+import { KeyScheduler, FileStateAdapter } from "ai-key-manager";
 
-Preferred wrapper pattern:
+const scheduler = new KeyScheduler({
+  providers: [
+    {
+      name: "openrouter",
+      model: "google/gemma-4-26b-a4b-it:free",
+      defaultCooldownMs: 60_000,
+      keys: [
+        { id: "or-a7f3", value: process.env.OPENROUTER_KEY_A7F3 },
+        { id: "or-k2m9", value: process.env.OPENROUTER_KEY_K2M9 },
+        { id: "or-q4x8", value: process.env.OPENROUTER_KEY_Q4X8 }
+      ]
+    },
+    {
+      name: "google",
+      model: "gemini-2.5-flash",
+      defaultCooldownMs: 60_000,
+      keys: [
+        { id: "g-b1r8", value: process.env.GOOGLE_KEY_B1R8 },
+        { id: "g-c5t2", value: process.env.GOOGLE_KEY_C5T2 }
+      ]
+    }
+  ],
+  state: new FileStateAdapter(".llm-key-state.json")
+});
+
+Usage pattern (this is all the dev writes):
 
 const result = await scheduler.withRetry({
   provider: "openrouter",
-  model,
+  model: "google/gemma-4-26b-a4b-it:free",
   signal: abortController.signal,
   execute: async ({ apiKey, provider, model, signal }) => {
-    return callProvider({ apiKey, provider, model, prompt, signal });
+    // apiKey, provider, model are injected by the scheduler.
+    // Use them directly in your SDK call. Never hardcode these.
+    return callYourSDK({ apiKey, provider, model, prompt, signal });
   }
 });
 
-Manual pattern:
+What the wrapper handles automatically:
+1. Key selection: picks the least-recently-used healthy key for the requested provider/model.
+2. Rate-limit retry: detects 429, "rate limit", "quota", "exhausted" and rotates to the next key.
+3. Route fallback: detects UPSTREAM_ERROR, NOT_FOUND, 404, 403/blacklisted and tries another provider/model group.
+4. Route affinity: remembers the last successful fallback route and prefers it on future calls.
+5. Cooldown wait: if all keys are cooling and the soonest reset is within the timeout, waits and retries.
+6. Health tracking: degrades health on rate limits, recovers on success, uses health as tie-breaker.
+7. State persistence: persists only non-secret state (key IDs, lastUsedAt, resetAt, health scores).
+8. Abort support: respects AbortSignal before acquire, during execute, and while waiting for cooldown.
+9. Secret safety: raw API keys never appear in logs, errors, persisted state, or JSON output.
 
-const lease = await scheduler.acquire({ provider: "openrouter", model });
+For SSE/streaming startup retry:
+await scheduler.withStreamRetry({ provider, model, execute, signal });
 
-try {
-  const result = await callProvider({
-    apiKey: lease.key.secret.value(),
-    model,
-    prompt
-  });
-  await lease.success();
-  return result;
-} catch (error) {
-  if (isRateLimitError(error)) {
-    await lease.rateLimited({ retryAfter: getRetryAfter(error) });
-  } else {
-    await lease.release();
-  }
-  throw error;
-}
+Key rules:
+- The `execute` callback MUST use the `provider`, `model`, and `apiKey` passed in its argument — not outer-scope variables. This is critical because fallback can change the route.
+- Never log `apiKey`. It is the raw secret.
+- Load key values from environment variables or a secret manager. Never hardcode.
+- The wrapper throws safe package errors (KeyExhaustedError, ProviderRouteError, RetryAbortedError) with only non-secret fields.
+
+Optional advanced features:
+- `classifyError(error)`: force "retry" or "fail" for custom errors.
+- `getRetryAfter(error)`: extract Retry-After from custom error shapes.
+- `onRetry(event)` / `onFallback(event)`: observe retry/fallback events (safe fields only).
+- `fallbacks: false` or `fallbacks: [{ provider, model }, ...]`: control route fallback behavior.
+- `keyIdentity: { hmacSecret, onMismatch }`: detect swapped env keys after restart.
 ```
 
 ## What It Does
@@ -124,23 +122,34 @@ try {
 npm install ai-key-manager
 ```
 
-## Preferred: Wrap Any AI Call With Retry
+## The Core Abstraction
 
-Use `scheduler.withRetry()` when you want the package to handle acquire/success/rate-limit/release for you.
+The entire point of this package is one function: **`scheduler.withRetry()`**. It wraps your AI call and manages everything:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  scheduler.withRetry({ provider, model, execute })          │
+│                                                             │
+│  1. Acquire key (LRU, health-aware)                         │
+│  2. Inject { provider, model, apiKey } into execute()       │
+│  3. On success → mark key healthy, return result            │
+│  4. On 429/rate-limit → cooldown key, pick next, retry      │
+│  5. On route error → fall back to another provider/model    │
+│  6. On timeout/exhaust → throw safe KeyExhaustedError       │
+│  7. On abort → throw safe RetryAbortedError                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**You never call `acquire()`, `success()`, `rateLimited()`, or `release()` manually.** The wrapper does it all. You write only the generation logic:
 
 ```ts
-import {
-  FileStateAdapter,
-  KeyScheduler
-} from "ai-key-manager";
-
-const model = "google/gemma-4-26b-a4b-it:free";
+import { KeyScheduler, FileStateAdapter } from "ai-key-manager";
 
 const scheduler = new KeyScheduler({
   providers: [
     {
       name: "openrouter",
-      model,
+      model: "google/gemma-4-26b-a4b-it:free",
       defaultCooldownMs: 60_000,
       keys: [
         { id: "openrouter-a7f3", value: process.env.OPENROUTER_API_KEY_A7F3 },
@@ -152,37 +161,33 @@ const scheduler = new KeyScheduler({
   state: new FileStateAdapter(".llm-key-state.json")
 });
 
+// This is ALL you write:
 const text = await scheduler.withRetry({
   provider: "openrouter",
-  model,
-  timeoutMs: 60_000,
-  execute: async ({ apiKey, provider, model, key, attempt, maxAttempts, remainingMs, signal }) => {
-    // `apiKey` is the raw key. Use it only for the provider SDK call.
-    // `provider`, `model`, `key.id`, `attempt`, `maxAttempts`, and `remainingMs` are safe for logs.
-    return generateContent({
-      apiKey,
-      provider,
-      model,
-      prompt: "Write a short hello world.",
-      signal
-    });
+  model: "google/gemma-4-26b-a4b-it:free",
+  execute: async ({ apiKey, provider, model, signal }) => {
+    // provider, model, apiKey are injected by the scheduler.
+    // Use them directly — fallback may change the route.
+    return generateContent({ apiKey, provider, model, prompt: "Hello world", signal });
   }
 });
 ```
 
-`withRetry()` retries only retryable key/provider failures. By default it treats these as retryable:
+### Why `execute` Receives `provider` and `model`
 
-- HTTP status `429`
-- `rate_limit_exceeded`
-- messages containing `429`
-- messages containing `rate limit`
-- messages containing `too many requests`
-- messages containing `quota`
-- messages containing `exhausted`
+When fallback kicks in, the wrapper switches to a different `provider + model` group. If your `execute` function hardcodes the provider/model from the outer scope, it would call the wrong route. Always use the injected values:
 
-It retries up to the total number of keys configured for that exact `provider + model`. Non-rate-limit errors are released and rethrown immediately.
+```ts
+// ✅ Correct — uses injected provider/model
+execute: async ({ apiKey, provider, model }) => {
+  return callSDK({ apiKey, provider, model, prompt });
+}
 
-If the selected provider/model route itself is broken, such as a provider returning `UPSTREAM_ERROR`, `NOT_FOUND`, `model_not_found`, or "not supported for generateContent", the wrapper can move to another configured provider/model group. In that case, `provider` and `model` in `execute` are the current route, not necessarily the original input.
+// ❌ Wrong — ignores fallback route changes
+execute: async ({ apiKey }) => {
+  return callSDK({ apiKey, provider: "google", model: "gemini-2.5-flash", prompt });
+}
+```
 
 ## Wrap Any Provider Function
 
@@ -193,18 +198,10 @@ const result = await scheduler.withRetry({
   provider: "google",
   model: "gemini-2.5-flash",
   execute: async ({ apiKey, provider, model, signal }) => {
-    return generateWithAnySDK({
-      apiKey,
-      provider,
-      model,
-      prompt: "Summarize this document.",
-      signal
-    });
+    return generateWithAnySDK({ apiKey, provider, model, prompt: "Summarize this.", signal });
   }
 });
 ```
-
-Use the `provider` and `model` passed into `execute`. They represent the current route, so fallback can move from one configured group to another without your wrapper accidentally calling the old model.
 
 For streaming/SSE startup, use the stream alias:
 
@@ -218,7 +215,7 @@ const stream = await scheduler.withStreamRetry({
 });
 ```
 
-`withStreamRetry()` retries only failures that happen before the stream is returned. Once a stream exists, AI Key Manager marks the key as successful and does not retry mid-stream, which avoids duplicated tokens or double-billed output.
+`withStreamRetry()` retries only failures that happen before the stream is returned. Once a stream exists, AI Key Manager marks the key as successful and does not retry mid-stream.
 
 ## Retry Intelligence
 
@@ -245,9 +242,10 @@ By default, `withRetry()` and `withStreamRetry()` treat route failures as fallba
 
 They also treat common provider-blacklist/blocked route failures as fallback-safe (for example messages containing blacklist/blocked/provider-disabled semantics, including `403` + `FORBIDDEN` patterns from gateways).
 
-When fallback succeeds, the wrapper remembers that successful route for the requested `provider + model` and prefers it first on the next call in the same process, which avoids repeatedly probing a known-bad route.
+When fallback succeeds, the wrapper remembers that successful route for the requested `provider + model` and prefers it first on the next call in the same process.
 
 ```ts
+// Automatic fallback (default)
 const response = await scheduler.withRetry({
   provider: "google",
   model: "gemini-3.0-flash",
@@ -255,11 +253,8 @@ const response = await scheduler.withRetry({
     return generateWithRoute({ apiKey, provider, model, prompt, signal });
   }
 });
-```
 
-For stricter control, disable fallback or provide an ordered list:
-
-```ts
+// Explicit fallback list
 await scheduler.withRetry({
   provider: "google",
   model: "gemini-3.0-flash",
@@ -272,6 +267,7 @@ await scheduler.withRetry({
   }
 });
 
+// Disable fallback
 await scheduler.withRetry({
   provider: "google",
   model: "gemini-3.0-flash",
@@ -280,9 +276,7 @@ await scheduler.withRetry({
 });
 ```
 
-If every route fails before generation starts, the wrapper throws `ProviderRouteError` with only safe fields: `provider`, `model`, and `routesTried`.
-
-When every configured route fails with model access/not-found style errors (for example `UPSTREAM_ERROR` + `NOT_FOUND`, `FORBIDDEN`, `403`, `404`), the error message is explicit: `Model access denied or not found (404) across all configured provider/model routes.`
+If every route fails, the wrapper throws `ProviderRouteError` with only safe fields: `provider`, `model`, and `routesTried`.
 
 ## Edge-Case Checklist
 
@@ -309,77 +303,6 @@ const scheduler = new KeyScheduler({
 
 AI Key Manager stores only an HMAC fingerprint, never the raw API key or HMAC secret. With `onMismatch: "reset"`, old cooldown and health state for that key ID is ignored. With `onMismatch: "throw"`, the scheduler throws `KeyIdentityMismatchError`.
 
-## Manual Lease Flow
-
-```ts
-import {
-  FileStateAdapter,
-  KeyScheduler,
-  isRateLimitError
-} from "ai-key-manager";
-
-const scheduler = new KeyScheduler({
-  providers: [
-    {
-      name: "openrouter",
-      model: "google/gemma-4-26b-a4b-it:free",
-      defaultCooldownMs: 60_000,
-      keys: [
-        { id: "openrouter-a7f3", value: process.env.OPENROUTER_API_KEY_A7F3 },
-        { id: "openrouter-k2m9", value: process.env.OPENROUTER_API_KEY_K2M9 },
-        { id: "openrouter-q4x8", value: process.env.OPENROUTER_API_KEY_Q4X8 },
-        { id: "openrouter-v6n1", value: process.env.OPENROUTER_API_KEY_V6N1 },
-        { id: "openrouter-z9p5", value: process.env.OPENROUTER_API_KEY_Z9P5 }
-      ]
-    },
-    {
-      name: "google",
-      model: "gemini-2.5-flash",
-      defaultCooldownMs: 60_000,
-      keys: [
-        { id: "google-b1r8", value: process.env.GOOGLE_API_KEY_B1R8 },
-        { id: "google-c5t2", value: process.env.GOOGLE_API_KEY_C5T2 },
-        { id: "google-h7w4", value: process.env.GOOGLE_API_KEY_H7W4 },
-        { id: "google-m3d6", value: process.env.GOOGLE_API_KEY_M3D6 },
-        { id: "google-y8s0", value: process.env.GOOGLE_API_KEY_Y8S0 }
-      ]
-    },
-    {
-      name: "vercel-ai-gateway",
-      model: "anthropic/claude-sonnet-4.6",
-      defaultCooldownMs: 60_000,
-      keys: [
-        { id: "gateway-d4j7", value: process.env.AI_GATEWAY_API_KEY_D4J7 },
-        { id: "gateway-f8a2", value: process.env.AI_GATEWAY_API_KEY_F8A2 },
-        { id: "gateway-n6c3", value: process.env.AI_GATEWAY_API_KEY_N6C3 },
-        { id: "gateway-r1v9", value: process.env.AI_GATEWAY_API_KEY_R1V9 },
-        { id: "gateway-w5q4", value: process.env.AI_GATEWAY_API_KEY_W5Q4 }
-      ]
-    }
-  ],
-  state: new FileStateAdapter(".llm-key-state.json")
-});
-
-const lease = await scheduler.acquire({
-  provider: "openrouter",
-  model: "google/gemma-4-26b-a4b-it:free"
-});
-
-try {
-  const result = await callProvider(lease.key.secret.value());
-  await lease.success();
-  return result;
-} catch (error) {
-  if (isRateLimitError(error)) {
-    await lease.rateLimited({ retryAfter: getRetryAfter(error) });
-  } else {
-    await lease.release();
-  }
-
-  throw error;
-}
-```
-
 ## Wrapper Examples
 
 ### LangChain JS
@@ -394,15 +317,12 @@ export async function askWithLangChain(scheduler: KeyScheduler, prompt: string) 
   return scheduler.withRetry({
     provider: "openrouter",
     model,
-    execute: async ({ apiKey }) => {
+    execute: async ({ apiKey, provider, model }) => {
       const llm = new ChatOpenAI({
         model,
         apiKey,
-        configuration: {
-          baseURL: "https://openrouter.ai/api/v1"
-        }
+        configuration: { baseURL: "https://openrouter.ai/api/v1" }
       });
-
       return llm.invoke(prompt);
     }
   });
@@ -422,18 +342,13 @@ export async function askWithVercelAI(scheduler: KeyScheduler, prompt: string) {
   return scheduler.withRetry({
     provider: "vercel-ai-gateway",
     model,
-    execute: async ({ apiKey }) => {
+    execute: async ({ apiKey, provider, model }) => {
       const gateway = createOpenAICompatible({
         name: "vercel-ai-gateway",
         apiKey,
         baseURL: "https://ai-gateway.vercel.sh/v1"
       });
-
-      const result = await generateText({
-        model: gateway(model),
-        prompt
-      });
-
+      const result = await generateText({ model: gateway(model), prompt });
       return result.text;
     }
   });
@@ -446,11 +361,8 @@ export async function askWithVercelAI(scheduler: KeyScheduler, prompt: string) {
 const result = await scheduler.withRetry({
   provider: "google",
   model: "gemini-2.5-flash",
-  execute: async ({ apiKey }) => {
-    return generateWithYourSDK({
-      apiKey,
-      prompt: "Summarize this document."
-    });
+  execute: async ({ apiKey, provider, model }) => {
+    return generateWithYourSDK({ apiKey, provider, model, prompt: "Summarize this document." });
   }
 });
 ```
@@ -467,10 +379,7 @@ const scheduler = new KeyScheduler({
       keys: [
         { id: "openrouter-a7f3", value: process.env.OPENROUTER_API_KEY_A7F3 },
         { id: "openrouter-k2m9", value: process.env.OPENROUTER_API_KEY_K2M9 },
-        { id: "openrouter-q4x8", value: process.env.OPENROUTER_API_KEY_Q4X8 },
-        { id: "openrouter-v6n1", value: process.env.OPENROUTER_API_KEY_V6N1 },
-        { id: "openrouter-z9p5", value: process.env.OPENROUTER_API_KEY_Z9P5 },
-        { id: "openrouter-l0e4", value: process.env.OPENROUTER_API_KEY_L0E4 }
+        { id: "openrouter-q4x8", value: process.env.OPENROUTER_API_KEY_Q4X8 }
       ]
     },
     {
@@ -479,12 +388,7 @@ const scheduler = new KeyScheduler({
       defaultCooldownMs: 60_000,
       keys: [
         { id: "google-b1r8", value: process.env.GOOGLE_API_KEY_B1R8 },
-        { id: "google-c5t2", value: process.env.GOOGLE_API_KEY_C5T2 },
-        { id: "google-h7w4", value: process.env.GOOGLE_API_KEY_H7W4 },
-        { id: "google-m3d6", value: process.env.GOOGLE_API_KEY_M3D6 },
-        { id: "google-y8s0", value: process.env.GOOGLE_API_KEY_Y8S0 },
-        { id: "google-p9k1", value: process.env.GOOGLE_API_KEY_P9K1 },
-        { id: "google-x2n5", value: process.env.GOOGLE_API_KEY_X2N5 }
+        { id: "google-c5t2", value: process.env.GOOGLE_API_KEY_C5T2 }
       ]
     },
     {
@@ -493,11 +397,7 @@ const scheduler = new KeyScheduler({
       defaultCooldownMs: 60_000,
       keys: [
         { id: "gateway-d4j7", value: process.env.AI_GATEWAY_API_KEY_D4J7 },
-        { id: "gateway-f8a2", value: process.env.AI_GATEWAY_API_KEY_F8A2 },
-        { id: "gateway-n6c3", value: process.env.AI_GATEWAY_API_KEY_N6C3 },
-        { id: "gateway-r1v9", value: process.env.AI_GATEWAY_API_KEY_R1V9 },
-        { id: "gateway-w5q4", value: process.env.AI_GATEWAY_API_KEY_W5Q4 },
-        { id: "gateway-t7b0", value: process.env.AI_GATEWAY_API_KEY_T7B0 }
+        { id: "gateway-f8a2", value: process.env.AI_GATEWAY_API_KEY_F8A2 }
       ]
     }
   ],
@@ -514,6 +414,8 @@ Each key needs:
 The IDs above are intentionally random-looking but non-secret. Keep real key values in environment variables or a secret manager.
 
 ## What `acquire()` Returns
+
+> Note: you typically don't need `acquire()` directly. Use `withRetry()` instead.
 
 ```ts
 const lease = await scheduler.acquire({
@@ -547,17 +449,6 @@ Call exactly one lease method after the provider request:
 - `rateLimited({ retryAfter })`: provider returned 429; cool this key down.
 - `release()`: request failed for another reason; make the key available again.
 
-If all keys are cooling down, `acquire()` throws `NoAvailableKeyError` and includes `nextResetAt`.
-If no matching group exists, it throws `SchedulerConfigurationError`.
-
-Raw key access is intentionally explicit:
-
-```ts
-const rawKey = lease.key.secret.value();
-```
-
-Do not log `secret.value()`.
-
 ## Security Model
 
 AI Key Manager is local-first. It does not send API keys, prompts, responses, metadata, analytics, or telemetry to any external server. Scheduler operations make zero outbound network calls.
@@ -588,152 +479,6 @@ Available keys are chosen with greedy LRU selection using `lastUsedAt`. Rate-lim
 Inside one Node.js process, acquire and lease settlement calls are serialized so two concurrent requests do not receive the same key.
 
 `withRetry()` additionally keeps in-memory route affinity for each requested route so fallback wins can be reused on later calls.
-
-## LangChain JS Example
-
-Install:
-
-```sh
-npm install @langchain/openai @langchain/core ai-key-manager
-```
-
-```ts
-import { ChatOpenAI } from "@langchain/openai";
-import {
-  FileStateAdapter,
-  KeyScheduler,
-  isRateLimitError
-} from "ai-key-manager";
-
-const model = "openai/gpt-4o-mini";
-
-const scheduler = new KeyScheduler({
-  providers: [
-    {
-      name: "openrouter",
-      model,
-      defaultCooldownMs: 60_000,
-      keys: [
-        { id: "openrouter-a7f3", value: process.env.OPENROUTER_API_KEY_A7F3 },
-        { id: "openrouter-k2m9", value: process.env.OPENROUTER_API_KEY_K2M9 },
-        { id: "openrouter-q4x8", value: process.env.OPENROUTER_API_KEY_Q4X8 },
-        { id: "openrouter-v6n1", value: process.env.OPENROUTER_API_KEY_V6N1 },
-        { id: "openrouter-z9p5", value: process.env.OPENROUTER_API_KEY_Z9P5 }
-      ]
-    }
-  ],
-  state: new FileStateAdapter(".llm-key-state.json")
-});
-
-export async function askWithLangChain(prompt: string) {
-  const lease = await scheduler.acquire({ provider: "openrouter", model });
-
-  const llm = new ChatOpenAI({
-    model,
-    apiKey: lease.key.secret.value(),
-    configuration: {
-      baseURL: "https://openrouter.ai/api/v1"
-    }
-  });
-
-  try {
-    const response = await llm.invoke(prompt);
-    await lease.success();
-    return response;
-  } catch (error) {
-    if (isRateLimitError(error)) {
-      await lease.rateLimited({ retryAfter: readRetryAfter(error) });
-    } else {
-      await lease.release();
-    }
-
-    throw error;
-  }
-}
-
-function readRetryAfter(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const headers = (error as { headers?: Headers | Record<string, string> }).headers;
-  if (!headers) return undefined;
-  return headers instanceof Headers ? headers.get("retry-after") ?? undefined : headers["retry-after"];
-}
-```
-
-## Vercel AI SDK Example
-
-Install:
-
-```sh
-npm install ai @ai-sdk/openai-compatible ai-key-manager
-```
-
-```ts
-import { generateText } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import {
-  FileStateAdapter,
-  KeyScheduler,
-  isRateLimitError
-} from "ai-key-manager";
-
-const model = "anthropic/claude-sonnet-4.6";
-
-const scheduler = new KeyScheduler({
-  providers: [
-    {
-      name: "vercel-ai-gateway",
-      model,
-      defaultCooldownMs: 60_000,
-      keys: [
-        { id: "gateway-d4j7", value: process.env.AI_GATEWAY_API_KEY_D4J7 },
-        { id: "gateway-f8a2", value: process.env.AI_GATEWAY_API_KEY_F8A2 },
-        { id: "gateway-n6c3", value: process.env.AI_GATEWAY_API_KEY_N6C3 },
-        { id: "gateway-r1v9", value: process.env.AI_GATEWAY_API_KEY_R1V9 },
-        { id: "gateway-w5q4", value: process.env.AI_GATEWAY_API_KEY_W5Q4 }
-      ]
-    }
-  ],
-  state: new FileStateAdapter(".llm-key-state.json")
-});
-
-export async function askWithVercelAISDK(prompt: string) {
-  const lease = await scheduler.acquire({
-    provider: "vercel-ai-gateway",
-    model
-  });
-
-  const gateway = createOpenAICompatible({
-    name: "vercel-ai-gateway",
-    apiKey: lease.key.secret.value(),
-    baseURL: "https://ai-gateway.vercel.sh/v1"
-  });
-
-  try {
-    const result = await generateText({
-      model: gateway(model),
-      prompt
-    });
-
-    await lease.success();
-    return result.text;
-  } catch (error) {
-    if (isRateLimitError(error)) {
-      await lease.rateLimited({ retryAfter: readRetryAfter(error) });
-    } else {
-      await lease.release();
-    }
-
-    throw error;
-  }
-}
-
-function readRetryAfter(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const headers = (error as { responseHeaders?: Headers | Record<string, string> }).responseHeaders;
-  if (!headers) return undefined;
-  return headers instanceof Headers ? headers.get("retry-after") ?? undefined : headers["retry-after"];
-}
-```
 
 ## State Adapters
 
@@ -797,6 +542,12 @@ import {
 - Route affinity memory: remembers and prefers the last successful fallback route per requested provider/model.
 - Blacklisted/blocked provider route detection added to default fallback-safe route handling.
 - Added retry-wrapper tests for provider with keys route-memory preference, blacklisted route fallback, and exhausted-route fallback progression.
+
+### v0.3.0
+
+- Updated AI prompt to emphasize the `withRetry()` abstraction — devs just pass `execute` and receive `{ provider, model, apiKey }` injected.
+- 31 comprehensive battle tests covering multi-provider cascade, cooldown timing, state persistence across restarts, concurrent acquire serialization, health score degradation/recovery, abort scenarios, route affinity memory, blacklist detection, custom error classification, and callback safety.
+- README restructured around the core abstraction: the wrapper manages everything, devs write only generation logic.
 
 ## Development
 
