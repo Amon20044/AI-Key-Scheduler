@@ -1,6 +1,6 @@
 {
   "name": "@ai-key-scheduler/ai-sdk",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Vercel AI SDK adapter for @ai-key-scheduler/core.",
   "repository": {
     "type": "git",
@@ -27,7 +27,7 @@
     "clean": "rimraf dist",
     "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && tsc -p tsconfig.types.json && node ../../scripts/fix-cjs-extensions.cjs",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
@@ -42,7 +42,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@ai-key-scheduler/core": "0.3.1"
+    "@ai-key-scheduler/core": "0.3.2"
   },
   "peerDependencies": {
     "ai": ">=4.0.0"

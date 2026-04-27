@@ -1,6 +1,6 @@
 {
   "name": "@ai-key-scheduler/core",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Core scheduler, heap, LRU, cooldown, state, retry, and error handling for AI API keys.",
   "repository": {
     "type": "git",

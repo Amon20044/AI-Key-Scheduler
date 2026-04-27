@@ -4,19 +4,19 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AKM — AI Key Manager | Rate-Limit Aware API Key Scheduling</title>
+    <title>AI Key Scheduler | Rate-Limit Aware API Key Scheduling</title>
     <meta name="description"
-        content="Stop losing demos to rate limits. AKM is a local-first, zero-telemetry API key scheduler for Node.js. Smart LRU selection, auto-failover, secret redaction. Built for MVP builders and hackathon teams." />
+        content="Local-first API key scheduler for Node.js with scoped core, Vercel AI SDK, and LangChain packages. Smart LRU selection, cooldowns, failover, and secret redaction." />
     <meta name="keywords"
         content="AI key manager, API key rotation, rate limit, Node.js, TypeScript, LLM, OpenAI, Gemini, OpenRouter, key scheduling, hackathon, MVP" />
     <meta name="author" content="Amon20044" />
-    <meta property="og:title" content="AKM — AI Key Manager" />
+    <meta property="og:title" content="AI Key Scheduler" />
     <meta property="og:description"
         content="Your demo didn't fail because of the model. It failed because your API key got rate-limited." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://amon20044.github.io/AI-Key-Scheduler" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="AKM — AI Key Manager" />
+    <meta name="twitter:title" content="AI Key Scheduler" />
     <meta name="twitter:description" content="Rate-limit aware API key scheduling. Never fail a demo again." />
     <link rel="canonical" href="https://amon20044.github.io/AI-Key-Scheduler" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -1244,8 +1244,8 @@
         <div class="nav-cta">
             <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-ghost" target="_blank"
                 rel="noopener">★ Star on GitHub</a>
-            <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-accent" target="_blank"
-                rel="noopener">npm →</a>
+            <a href="https://www.npmjs.com/package/@ai-key-scheduler/core" class="btn btn-accent" target="_blank"
+                rel="noopener">npm packages</a>
         </div>
     </nav>
 
@@ -1253,7 +1253,7 @@
     <section class="hero" aria-label="Hero">
         <div class="hero-eyebrow">
             <div class="dot-pulse"></div>
-            v0.3.1 · stable · zero telemetry
+            v0.3.2 · core + adapters · zero telemetry
         </div>
 
         <h1 class="hero-headline">
@@ -1262,12 +1262,12 @@
         </h1>
 
         <p class="hero-sub">
-            <strong>AKM</strong> sits quietly in your backend and makes sure your LLM calls don't randomly collapse —
-            right when it matters. Smart rotation, auto-failover, zero proxy.
+            <strong>AI Key Scheduler</strong> sits quietly in your backend and makes sure your LLM calls don't randomly collapse.
+            Use the core scheduler directly, or plug in the Vercel AI SDK and LangChain adapters.
         </p>
 
         <div class="install-block">
-            <code><span>$</span> npm install <span style="color:var(--text)">ai-key-manager</span></code>
+            <code><span>$</span> npm i <span style="color:var(--text)">@ai-key-scheduler/core</span></code>
             <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy install command">COPY</button>
         </div>
 
@@ -1276,7 +1276,7 @@
                 target="_blank" rel="noopener">
                 ★ Star on GitHub
             </a>
-            <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-ghost btn-large" target="_blank"
+            <a href="https://www.npmjs.com/package/@ai-key-scheduler/core" class="btn btn-ghost btn-large" target="_blank"
                 rel="noopener">
                 View on npm
             </a>
@@ -1286,10 +1286,10 @@
         </div>
 
         <div class="hero-badges">
-            <div class="badge"><span class="icon">🔒</span><strong>Zero Telemetry</strong> — local-first</div>
-            <div class="badge"><span class="icon">⚡</span><strong>Auto-Failover</strong> — across providers</div>
-            <div class="badge"><span class="icon">🔑</span><strong>Secrets Redacted</strong> — even in logs</div>
-            <div class="badge"><span class="icon">🧠</span><strong>Smart LRU</strong> — no manual rotation</div>
+            <div class="badge"><span class="icon">*</span><strong>Zero Telemetry</strong> - local-first</div>
+            <div class="badge"><span class="icon">*</span><strong>Adapters</strong> - Vercel AI + LangChain</div>
+            <div class="badge"><span class="icon">*</span><strong>Secrets Redacted</strong> - even in logs</div>
+            <div class="badge"><span class="icon">*</span><strong>Smart LRU</strong> - no manual rotation</div>
         </div>
     </section>
 
@@ -1565,7 +1565,7 @@
     <section id="features">
         <div class="section-label">Features</div>
         <h2 class="section-title">Everything you'd have<br>to build yourself.</h2>
-        <p class="section-body">93 tests. Battle-tested. Every edge case covered.</p>
+        <p class="section-body">97 tests across core, custom usage, Vercel AI SDK adapter, and LangChain adapter.</p>
 
         <div class="features-grid">
             <div class="feature-card">
@@ -1636,7 +1636,7 @@
     <section id="code">
         <div class="section-label">Code</div>
         <h2 class="section-title">Three lines of setup.<br>One wrapper. Done.</h2>
-        <p class="section-body">Works with any AI SDK — LangChain, Vercel AI, raw fetch, Anthropic SDK, anything.</p>
+        <p class="section-body">Use the core wrapper for anything, or the scoped adapter packages for Vercel AI SDK and LangChain.</p>
 
         <div class="code-tabs">
             <div class="tab-bar">
@@ -1648,7 +1648,7 @@
             </div>
 
             <div id="tab-setup" class="tab-content active">
-                <pre><span class="k">import</span> { <span class="n">KeyScheduler</span>, <span class="n">FileStateAdapter</span> } <span class="k">from</span> <span class="s">"ai-key-manager"</span>
+                <pre><span class="k">import</span> { <span class="n">KeyScheduler</span>, <span class="n">FileStateAdapter</span> } <span class="k">from</span> <span class="s">"@ai-key-scheduler/core"</span>
 
 <span class="k">const</span> <span class="n">scheduler</span> = <span class="k">new</span> <span class="t">KeyScheduler</span>({
   providers: [
@@ -1707,20 +1707,22 @@
 
             <div id="tab-langchain" class="tab-content">
                 <pre><span class="k">import</span> { <span class="n">ChatOpenAI</span> } <span class="k">from</span> <span class="s">"@langchain/openai"</span>
-<span class="k">import</span> { <span class="n">KeyScheduler</span> } <span class="k">from</span> <span class="s">"ai-key-manager"</span>
+<span class="k">import</span> { <span class="n">invokeWithKey</span> } <span class="k">from</span> <span class="s">"@ai-key-scheduler/langchain"</span>
 
 <span class="k">export async function</span> <span class="f">askWithLangChain</span>(scheduler, prompt) {
-  <span class="k">return</span> scheduler.<span class="f">withRetry</span>({
-    execute: <span class="k">async</span> ({ apiKey, provider, model }) => {
-      <span class="k">const</span> <span class="n">llm</span> = <span class="k">new</span> <span class="t">ChatOpenAI</span>({
+  <span class="k">return</span> <span class="f">invokeWithKey</span>({
+    scheduler,
+    provider: <span class="s">"openrouter"</span>,
+    model: <span class="s">"openai/gpt-4o-mini"</span>,
+    input: prompt,
+    createModel: ({ apiKey, model }) =>
+      <span class="k">new</span> <span class="t">ChatOpenAI</span>({
         model,
         apiKey,
         configuration: {
           baseURL: <span class="s">"https://openrouter.ai/api/v1"</span>
         }
       })
-      <span class="k">return</span> llm.<span class="f">invoke</span>(prompt)
-    }
   })
 }</pre>
             </div>
@@ -1728,23 +1730,25 @@
             <div id="tab-vercel" class="tab-content">
                 <pre><span class="k">import</span> { <span class="n">generateText</span> } <span class="k">from</span> <span class="s">"ai"</span>
 <span class="k">import</span> { <span class="n">createOpenAICompatible</span> } <span class="k">from</span> <span class="s">"@ai-sdk/openai-compatible"</span>
-<span class="k">import</span> { <span class="n">KeyScheduler</span> } <span class="k">from</span> <span class="s">"ai-key-manager"</span>
+<span class="k">import</span> { <span class="n">generateTextWithKey</span> } <span class="k">from</span> <span class="s">"@ai-key-scheduler/ai-sdk"</span>
 
 <span class="k">export async function</span> <span class="f">askWithVercelAI</span>(scheduler, prompt) {
-  <span class="k">return</span> scheduler.<span class="f">withRetry</span>({
-    execute: <span class="k">async</span> ({ apiKey, provider, model }) => {
+  <span class="k">const</span> { text } = <span class="k">await</span> <span class="f">generateTextWithKey</span>({
+    scheduler,
+    provider: <span class="s">"vercel-ai-gateway"</span>,
+    model: <span class="s">"anthropic/claude-sonnet-4.6"</span>,
+    options: { prompt },
+    createModel: ({ apiKey, provider, model }) => {
       <span class="k">const</span> <span class="n">gateway</span> = <span class="f">createOpenAICompatible</span>({
         name: provider,
         apiKey,
         baseURL: <span class="s">"https://ai-gateway.vercel.sh/v1"</span>
       })
-      <span class="k">const</span> { text } = <span class="k">await</span> <span class="f">generateText</span>({
-        model: gateway(model),
-        prompt
-      })
-      <span class="k">return</span> text
-    }
+      <span class="k">return</span> gateway(model)
+    },
+    call: generateText
   })
+  <span class="k">return</span> text
 }</pre>
             </div>
         </div>
@@ -1813,7 +1817,7 @@
                     <td class="cross">✗ Locked in</td>
                 </tr>
                 <tr>
-                    <td>93 battle tests</td>
+                    <td>97 package tests</td>
                     <td class="check">✓ Shipped</td>
                     <td class="cross">✗ Who has time</td>
                     <td class="partial">~ Unknown</td>
@@ -1833,12 +1837,12 @@
             <div class="cta-btns">
                 <a href="https://github.com/Amon20044/AI-Key-Scheduler" class="btn btn-accent btn-large" target="_blank"
                     rel="noopener">★ Star on GitHub</a>
-                <a href="https://www.npmjs.com/package/ai-key-manager" class="btn btn-ghost btn-large" target="_blank"
+                <a href="https://www.npmjs.com/package/@ai-key-scheduler/core" class="btn btn-ghost btn-large" target="_blank"
                     rel="noopener">View on npm</a>
             </div>
             <div style="margin-top:1.5rem">
                 <div class="install-block" style="max-width:340px;margin:0 auto;animation:none;box-shadow:none;">
-                    <code><span>$</span> npm i <span style="color:var(--text)">ai-key-manager</span></code>
+                    <code><span>$</span> npm i <span style="color:var(--text)">@ai-key-scheduler/core</span></code>
                     <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy">COPY</button>
                 </div>
             </div>
@@ -1849,11 +1853,11 @@
     <footer>
         <div class="footer-left">
             <a href="#" class="footer-logo">AKM</a>
-            <span class="footer-note">Rate-limit aware API key scheduling · v0.3.1 · MIT</span>
+            <span class="footer-note">Rate-limit aware API key scheduling · v0.3.2 · MIT</span>
         </div>
         <div class="footer-links">
             <a href="https://github.com/Amon20044/AI-Key-Scheduler" target="_blank" rel="noopener">GitHub</a>
-            <a href="https://www.npmjs.com/package/ai-key-manager" target="_blank" rel="noopener">npm</a>
+            <a href="https://www.npmjs.com/package/@ai-key-scheduler/core" target="_blank" rel="noopener">npm</a>
             <a href="https://github.com/Amon20044/AI-Key-Scheduler/blob/main/SECURITY.md" target="_blank"
                 rel="noopener">Security</a>
             <a href="https://github.com/Amon20044/AI-Key-Scheduler/blob/main/CHANGELOG.md" target="_blank"
@@ -1864,7 +1868,7 @@
     <script>
         // Copy to clipboard
         function copyInstall(btn) {
-            navigator.clipboard.writeText('npm install ai-key-manager').then(() => {
+            navigator.clipboard.writeText('npm install @ai-key-scheduler/core').then(() => {
                 const orig = btn.textContent;
                 btn.textContent = 'COPIED!';
                 btn.style.color = 'var(--green)';
@@ -1922,12 +1926,12 @@
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  "name": "AI Key Manager (AKM)",
+  "name": "AI Key Scheduler",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Node.js",
   "description": "Rate-limit aware API key scheduling for TypeScript and Node.js. Smart LRU selection, auto-failover, zero telemetry.",
   "url": "https://amon20044.github.io/AI-Key-Scheduler",
-  "downloadUrl": "https://www.npmjs.com/package/ai-key-manager",
+  "downloadUrl": "https://www.npmjs.com/package/@ai-key-scheduler/core",
   "codeRepository": "https://github.com/Amon20044/AI-Key-Scheduler",
   "programmingLanguage": ["TypeScript", "JavaScript"],
   "license": "https://opensource.org/licenses/MIT",
