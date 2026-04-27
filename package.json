@@ -15,12 +15,12 @@
   ],
   "scripts": {
     "clean": "npm run clean --workspaces --if-present",
-    "build": "npm run build --workspace ai-key-manager && npm run build --workspace ai-key-manager/ai-sdk && npm run build --workspace ai-key-manager/langchain",
-    "lint": "npm run lint --workspace ai-key-manager && npm run lint --workspace ai-key-manager/ai-sdk && npm run lint --workspace ai-key-manager/langchain",
+    "build": "npm run build --workspace @ai-key-manager/core && npm run build --workspace @ai-key-manager/ai-sdk && npm run build --workspace @ai-key-manager/langchain",
+    "lint": "npm run lint --workspace @ai-key-manager/core && npm run lint --workspace @ai-key-manager/ai-sdk && npm run lint --workspace @ai-key-manager/langchain",
     "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run test:security && npm run build",
-    "test": "npm run test --workspace ai-key-manager && npm run test --workspace ai-key-manager/ai-sdk && npm run test --workspace ai-key-manager/langchain",
-    "test:security": "npm run test:security --workspace ai-key-manager",
-    "typecheck": "npm run build --workspace ai-key-manager && npm run typecheck --workspace ai-key-manager && npm run typecheck --workspace ai-key-manager/ai-sdk && npm run typecheck --workspace ai-key-manager/langchain"
+    "test": "npm run test --workspace @ai-key-manager/core && npm run test --workspace @ai-key-manager/ai-sdk && npm run test --workspace @ai-key-manager/langchain",
+    "test:security": "npm run test:security --workspace @ai-key-manager/core",
+    "typecheck": "npm run build --workspace @ai-key-manager/core && npm run typecheck --workspace @ai-key-manager/core && npm run typecheck --workspace @ai-key-manager/ai-sdk && npm run typecheck --workspace @ai-key-manager/langchain"
   },
   "engines": {
     "node": ">=18"
