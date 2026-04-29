@@ -1,6 +1,6 @@
 {
   "name": "ai-key-manager",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "TypeScript adaptive AI key scheduling with provider-level routing, key-level strategies, rate-limit retry, cooldown, and provider/model failover.",
   "repository": {
     "type": "git",
