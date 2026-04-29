@@ -17,17 +17,31 @@ export interface APIKey {
   resetAt?: Date;
   healthScore: number;
   successCount: number;
+  failureCount: number;
+  avgLatency: number;
   rateLimitCount: number;
   consecutiveRateLimits: number;
   lastFailedAt?: Date;
   metadata?: Record<string, unknown>;
 }
 
+export type KeySelectionStrategy = "lru" | "weighted" | "adaptive" | "random";
+
 export interface ProviderConfig {
   name: string;
   model: string;
   defaultCooldownMs: number;
+  selectionStrategy?: KeySelectionStrategy;
   keys: KeyConfig[];
+}
+
+export type ProviderStrategyType = "adaptive" | "ordered" | "round-robin" | "weighted";
+
+export interface ProviderStrategyOptions {
+  type: ProviderStrategyType;
+  order?: AcquireRequest[];
+  weights?: Record<string, number>;
+  explorationEpsilon?: number;
 }
 
 export interface SchedulerOptions {
@@ -54,14 +68,20 @@ export interface KeyGroupInfo extends AcquireRequest {
 export interface RateLimitedOptions {
   retryAfter?: string | number | Date | null;
   cooldownMs?: number;
+  latencyMs?: number;
+}
+
+export interface LeaseSettleOptions {
+  latencyMs?: number;
+  recordFailure?: boolean;
 }
 
 export interface KeyLease {
   key: APIKey;
   provider: string;
   model: string;
-  success(): Promise<void>;
-  release(): Promise<void>;
+  success(options?: LeaseSettleOptions): Promise<void>;
+  release(options?: LeaseSettleOptions): Promise<void>;
   rateLimited(options?: RateLimitedOptions): Promise<void>;
 }
 
@@ -136,6 +156,11 @@ export interface WithKeyRetryOptions<T> {
    */
   fallbacks?: KeyFallbackConfig;
   /**
+   * Provider selection strategy for auto-routing mode (provider/model omitted).
+   * Defaults to adaptive when provider order is not explicitly requested.
+   */
+  providerStrategy?: ProviderStrategyOptions;
+  /**
    * Adds custom retry classification on top of the built-in 429/quota/exhausted
    * detector. Return true to force a retry.
    */
@@ -156,6 +181,8 @@ export interface PersistedKeyState {
   keyFingerprint?: string;
   healthScore?: number;
   successCount?: number;
+  failureCount?: number;
+  avgLatency?: number;
   rateLimitCount?: number;
   consecutiveRateLimits?: number;
   lastFailedAt?: number;

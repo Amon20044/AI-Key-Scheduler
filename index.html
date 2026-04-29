@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AKM — AI Key Manager | Rate-Limit Aware API Key Scheduling</title>
     <meta name="description"
-        content="Stop losing demos to rate limits. AKM is a local-first, zero-telemetry API key scheduler for Node.js. Smart LRU selection, auto-failover, secret redaction. Built for MVP builders and hackathon teams." />
+        content="Stop losing demos to rate limits. AKM is a local-first, zero-telemetry API key scheduler for Node.js with adaptive provider routing, pluggable key strategies (LRU/weighted/adaptive/random), auto-failover, and secret redaction." />
     <meta name="keywords"
         content="AI key manager, API key rotation, rate limit, Node.js, TypeScript, LLM, OpenAI, Gemini, OpenRouter, key scheduling, hackathon, MVP" />
     <meta name="author" content="Amon20044" />
@@ -92,6 +92,7 @@
             padding: 0 clamp(1.5rem, 5vw, 4rem);
             height: 64px;
             background: rgba(6, 6, 8, 0.8);
+            -webkit-backdrop-filter: blur(20px);
             backdrop-filter: blur(20px);
             border-bottom: 1px solid var(--border);
         }
@@ -1253,7 +1254,7 @@
     <section class="hero" aria-label="Hero">
         <div class="hero-eyebrow">
             <div class="dot-pulse"></div>
-            v0.3.1 · stable · zero telemetry
+            v0.3.2 · adaptive scheduling · zero telemetry
         </div>
 
         <h1 class="hero-headline">
@@ -1289,7 +1290,7 @@
             <div class="badge"><span class="icon">🔒</span><strong>Zero Telemetry</strong> — local-first</div>
             <div class="badge"><span class="icon">⚡</span><strong>Auto-Failover</strong> — across providers</div>
             <div class="badge"><span class="icon">🔑</span><strong>Secrets Redacted</strong> — even in logs</div>
-            <div class="badge"><span class="icon">🧠</span><strong>Smart LRU</strong> — no manual rotation</div>
+            <div class="badge"><span class="icon">🧠</span><strong>Adaptive Routing</strong> — provider + key level</div>
         </div>
     </section>
 
@@ -1409,8 +1410,8 @@
                 <span class="how-num">01</span>
                 <span class="how-icon">🎯</span>
                 <h3>Pick the Best Key</h3>
-                <p>Greedy LRU selection picks the least-recently-used healthy key. Rate-limited keys cool in a min-heap
-                    and return to pool automatically.</p>
+                <p>Provider routes are scored and selected adaptively (max-heap), while each provider picks keys by
+                    strategy (LRU, weighted, adaptive, or random).</p>
             </div>
             <div class="how-card">
                 <span class="how-num">02</span>
@@ -1500,7 +1501,7 @@
                         <div class="level-num">L2</div>
                         <span class="level-name">Key Level (per provider)</span>
                     </div>
-                    <span class="level-tag">LRU + cooldown heap</span>
+                    <span class="level-tag">strategy + cooldown heap</span>
                 </div>
                 <div class="level-body">
                     <p class="level-desc">
@@ -1534,8 +1535,8 @@
                 </div>
                 <div class="level-body">
                     <p class="level-desc">
-                        Don't specify any provider or model. AKM tries all configured groups in order, cascading on
-                        failure.
+                        Don't specify any provider or model. AKM uses adaptive provider scoring by default and
+                        cascades on failures.
                         The simplest way — and the most resilient.
                     </p>
                     <div class="terminal" style="margin-top:0.5rem">
@@ -1771,8 +1772,8 @@
             </thead>
             <tbody>
                 <tr>
-                    <td>LRU key selection</td>
-                    <td class="check">✓ Built-in</td>
+                    <td>Pluggable key strategies</td>
+                    <td class="check">✓ LRU / weighted / adaptive / random</td>
                     <td class="cross">✗ You write it</td>
                     <td class="partial">~ Maybe</td>
                 </tr>
@@ -1849,7 +1850,7 @@
     <footer>
         <div class="footer-left">
             <a href="#" class="footer-logo">AKM</a>
-            <span class="footer-note">Rate-limit aware API key scheduling · v0.3.1 · MIT</span>
+            <span class="footer-note">Rate-limit aware adaptive key scheduling · v0.3.2 · MIT</span>
         </div>
         <div class="footer-links">
             <a href="https://github.com/Amon20044/AI-Key-Scheduler" target="_blank" rel="noopener">GitHub</a>
@@ -1925,7 +1926,7 @@
   "name": "AI Key Manager (AKM)",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Node.js",
-  "description": "Rate-limit aware API key scheduling for TypeScript and Node.js. Smart LRU selection, auto-failover, zero telemetry.",
+  "description": "Rate-limit aware adaptive API key scheduling for TypeScript and Node.js. Adaptive provider routing, pluggable key strategies, auto-failover, zero telemetry.",
   "url": "https://amon20044.github.io/AI-Key-Scheduler",
   "downloadUrl": "https://www.npmjs.com/package/ai-key-manager",
   "codeRepository": "https://github.com/Amon20044/AI-Key-Scheduler",

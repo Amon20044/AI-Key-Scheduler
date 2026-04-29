@@ -1,6 +1,7 @@
 import { isRateLimitError, KeyExhaustedError, NoAvailableKeyError, ProviderRouteError, RetryAbortedError } from "./errors.js";
+import { MaxScoreHeap } from "./heap.js";
 import type { KeyScheduler } from "./scheduler.js";
-import type { AcquireRequest, KeyFallbackEvent, KeyRetryEvent, WithKeyRetryOptions } from "./types.js";
+import type { AcquireRequest, KeyFallbackEvent, KeyRetryEvent, ProviderStrategyOptions, WithKeyRetryOptions } from "./types.js";
 
 export const DEFAULT_RETRY_TIMEOUT_MS = 60_000;
 export const DEFAULT_RETRY_POLL_INTERVAL_MS = 50;
@@ -11,6 +12,17 @@ const FALLBACK_ERROR_PATTERN =
 const MODEL_ACCESS_DENIED_OR_NOT_FOUND_PATTERN =
   /model[\s\S]{0,80}not[\s_-]?found|not[\s_-]?found|model_not_found|access[\s_-]?denied|forbidden|403|404|not supported for generatecontent|unsupported model|blacklist(?:ed)?|provider[\s_-]?(?:blocked|disabled|banned)/i;
 const routeAffinityByScheduler = new WeakMap<KeyScheduler, Map<string, AcquireRequest>>();
+const providerStateByScheduler = new WeakMap<KeyScheduler, Map<string, ProviderRuntimeState>>();
+const roundRobinCursorByScheduler = new WeakMap<KeyScheduler, number>();
+
+interface ProviderRuntimeState {
+  name: string;
+  successCount: number;
+  failureCount: number;
+  avgLatency: number;
+  lastUsedAt: number;
+  cooldownUntil?: number;
+}
 
 export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>): Promise<T> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
@@ -80,6 +92,7 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
 
       attempts += 1;
       const attempt = attempts;
+      const attemptStartedAt = now();
 
       try {
         if (options.signal?.aborted) {
@@ -97,7 +110,13 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
           remainingMs: Math.max(0, deadline - now()),
           signal: options.signal
         });
-        await lease.success();
+        const latencyMs = Math.max(0, now() - attemptStartedAt);
+        await lease.success({ latencyMs });
+        updateProviderState(scheduler, route, {
+          now: now(),
+          latencyMs,
+          success: true
+        });
         rememberRouteAffinity(scheduler, requestedRoute, route);
         return result;
       } catch (error) {
@@ -107,7 +126,14 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
         }
 
         if (isFallbackRouteError(error, options)) {
+          const latencyMs = Math.max(0, now() - attemptStartedAt);
           await lease.release();
+          updateProviderState(scheduler, route, {
+            now: now(),
+            latencyMs,
+            success: false,
+            cooldownMs: 2_000
+          });
           clearRouteAffinityIfFailed(scheduler, requestedRoute, route);
           if (routeIndex >= routes.length - 1) {
             const routeErrorMessage = isModelAccessDeniedOrNotFoundError(error)
@@ -142,7 +168,20 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
         if (classification === "retry") {
           lastRetryableKeyId = lease.key.id;
           const retryAfter = options.getRetryAfter?.(error) ?? extractRetryAfter(error);
-          await lease.rateLimited({ retryAfter });
+          const latencyMs = Math.max(0, now() - attemptStartedAt);
+          await lease.rateLimited({ retryAfter, latencyMs });
+          const parsedRetryAfterMs =
+            typeof retryAfter === "number"
+              ? retryAfter * 1000
+              : typeof retryAfter === "string" && Number.isFinite(Number(retryAfter))
+                ? Number(retryAfter) * 1000
+                : undefined;
+          updateProviderState(scheduler, route, {
+            now: now(),
+            latencyMs,
+            success: false,
+            cooldownMs: parsedRetryAfterMs
+          });
           await options.onRetry?.({
             keyId: lease.key.id,
             provider: route.provider,
@@ -156,7 +195,12 @@ export async function withKeyRetry<T>(scheduler: KeyScheduler, options: WithKeyR
           continue;
         }
 
-        await lease.release();
+        await lease.release({ recordFailure: true, latencyMs: Math.max(0, now() - attemptStartedAt) });
+        updateProviderState(scheduler, route, {
+          now: now(),
+          latencyMs: Math.max(0, now() - attemptStartedAt),
+          success: false
+        });
         throw error;
       }
     }
@@ -282,8 +326,8 @@ function buildRoutes<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>
   const hasRequestedRoute = options.provider !== undefined && options.model !== undefined;
 
   if (!hasRequestedRoute) {
-    // Auto-pick: try all configured groups in order
-    for (const group of scheduler.listGroups()) {
+    const selected = selectAutoRoutes(scheduler, options.providerStrategy);
+    for (const group of selected) {
       addRoute(toAcquireRequest(group));
     }
     return routes;
@@ -315,6 +359,94 @@ function buildRoutes<T>(scheduler: KeyScheduler, options: WithKeyRetryOptions<T>
   return routes;
 }
 
+function selectAutoRoutes(scheduler: KeyScheduler, strategy?: ProviderStrategyOptions): AcquireRequest[] {
+  const groups = scheduler.listGroups().map((group) => toAcquireRequest(group));
+  const activeStrategy = strategy?.type ?? "adaptive";
+  if (groups.length <= 1) {
+    return groups;
+  }
+
+  if (activeStrategy === "ordered") {
+    return buildOrderedRoutes(groups, strategy?.order);
+  }
+
+  if (activeStrategy === "round-robin") {
+    const cursor = roundRobinCursorByScheduler.get(scheduler) ?? 0;
+    const next = cursor % groups.length;
+    roundRobinCursorByScheduler.set(scheduler, next + 1);
+    return [...groups.slice(next), ...groups.slice(0, next)];
+  }
+
+  if (activeStrategy === "weighted") {
+    return buildWeightedRoutes(groups, strategy?.weights);
+  }
+
+  return buildAdaptiveRoutes(scheduler, groups, strategy?.explorationEpsilon ?? 0.05);
+}
+
+function buildOrderedRoutes(groups: AcquireRequest[], order: AcquireRequest[] | undefined): AcquireRequest[] {
+  if (!order || order.length === 0) {
+    return groups;
+  }
+  const ordered: AcquireRequest[] = [];
+  for (const route of order) {
+    const found = groups.find((candidate) => sameRoute(candidate, route));
+    if (found && !ordered.some((candidate) => sameRoute(candidate, found))) {
+      ordered.push(found);
+    }
+  }
+  for (const group of groups) {
+    if (!ordered.some((candidate) => sameRoute(candidate, group))) {
+      ordered.push(group);
+    }
+  }
+  return ordered;
+}
+
+function buildWeightedRoutes(groups: AcquireRequest[], weights: Record<string, number> | undefined): AcquireRequest[] {
+  const remaining = [...groups];
+  const ordered: AcquireRequest[] = [];
+  while (remaining.length > 0) {
+    const total = remaining.reduce((sum, route) => sum + getRouteWeight(route, weights), 0);
+    let cursor = Math.random() * Math.max(total, 0.001);
+    let selectedIndex = 0;
+    for (let i = 0; i < remaining.length; i += 1) {
+      cursor -= getRouteWeight(remaining[i], weights);
+      if (cursor <= 0) {
+        selectedIndex = i;
+        break;
+      }
+    }
+    ordered.push(remaining.splice(selectedIndex, 1)[0]);
+  }
+  return ordered;
+}
+
+function buildAdaptiveRoutes(scheduler: KeyScheduler, groups: AcquireRequest[], epsilon: number): AcquireRequest[] {
+  const store = getProviderStore(scheduler);
+  const heap = new MaxScoreHeap<{ id: string; score: number; route: AcquireRequest }>();
+  const now = Date.now();
+
+  for (const route of groups) {
+    const state = getOrCreateProviderState(store, route);
+    const score = getProviderScore(state, now, epsilon);
+    heap.upsert({ id: routeKey(route), score, route });
+  }
+
+  const ordered: AcquireRequest[] = [];
+  while (heap.size > 0) {
+    ordered.push(heap.pop()!.route);
+  }
+  return ordered;
+}
+
+function getRouteWeight(route: AcquireRequest, weights: Record<string, number> | undefined): number {
+  if (!weights) {
+    return 1;
+  }
+  return Math.max(0.001, weights[routeKey(route)] ?? weights[route.provider] ?? 1);
+}
+
 function toAcquireRequest(input: { provider: string; model: string }): AcquireRequest {
   return {
     provider: input.provider,
@@ -343,6 +475,67 @@ function getAffinityStore(scheduler: KeyScheduler): Map<string, AcquireRequest> 
   const created = new Map<string, AcquireRequest>();
   routeAffinityByScheduler.set(scheduler, created);
   return created;
+}
+
+function getProviderStore(scheduler: KeyScheduler): Map<string, ProviderRuntimeState> {
+  const existing = providerStateByScheduler.get(scheduler);
+  if (existing) {
+    return existing;
+  }
+  const created = new Map<string, ProviderRuntimeState>();
+  providerStateByScheduler.set(scheduler, created);
+  return created;
+}
+
+function getOrCreateProviderState(
+  store: Map<string, ProviderRuntimeState>,
+  route: AcquireRequest
+): ProviderRuntimeState {
+  const key = routeKey(route);
+  const existing = store.get(key);
+  if (existing) {
+    return existing;
+  }
+  const created: ProviderRuntimeState = {
+    name: route.provider,
+    successCount: 0,
+    failureCount: 0,
+    avgLatency: 0,
+    lastUsedAt: 0
+  };
+  store.set(key, created);
+  return created;
+}
+
+function updateProviderState(
+  scheduler: KeyScheduler,
+  route: AcquireRequest,
+  update: { now: number; latencyMs: number; success: boolean; cooldownMs?: number }
+): void {
+  const store = getProviderStore(scheduler);
+  const state = getOrCreateProviderState(store, route);
+  state.lastUsedAt = update.now;
+  state.avgLatency = state.avgLatency > 0 ? state.avgLatency * 0.8 + update.latencyMs * 0.2 : update.latencyMs;
+  if (update.success) {
+    state.successCount += 1;
+    state.cooldownUntil = undefined;
+    return;
+  }
+
+  state.failureCount += 1;
+  if (update.cooldownMs !== undefined && Number.isFinite(update.cooldownMs) && update.cooldownMs > 0) {
+    state.cooldownUntil = update.now + update.cooldownMs;
+  }
+}
+
+function getProviderScore(provider: ProviderRuntimeState, now: number, epsilon: number): number {
+  const successRate = provider.successCount / (provider.successCount + provider.failureCount + 1);
+  const latencyScore = 1 / (provider.avgLatency + 1);
+  const recencyScore = 1 / (Math.max(0, now - provider.lastUsedAt) + 1);
+  const cooldownPenalty = now < (provider.cooldownUntil ?? 0) ? -100 : 0;
+  const totalAttempts = provider.successCount + provider.failureCount;
+  const exploration = totalAttempts > 0 ? Math.random() * epsilon : 0;
+  return 0.4 * successRate + 0.3 * latencyScore + 0.2 * recencyScore + cooldownPenalty + exploration;
 }
 
 function getPreferredRoute(scheduler: KeyScheduler, requestedRoute: AcquireRequest): AcquireRequest | undefined {
