@@ -1,3 +1,12 @@
+/*
+ * logging.ts
+ *
+ * Helpers for safely serializing objects for logs. The goal is to avoid
+ * accidentally leaking secrets (API keys, tokens, request bodies) while still
+ * keeping useful debug fields. Use `sanitizeForLog` before emitting objects
+ * to logs or telemetry.
+ */
+
 import { REDACTED, SecretString } from "./secret.js";
 
 const SENSITIVE_KEYS = new Set([

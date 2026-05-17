@@ -1,3 +1,11 @@
+/*
+ * retryAfter.ts
+ *
+ * Utility to parse `Retry-After` values commonly returned by HTTP APIs. It
+ * accepts seconds, HTTP-date strings, Date objects, or numeric seconds and
+ * returns a millisecond duration suitable for scheduling cooldowns.
+ */
+
 export function parseRetryAfter(value: string | number | Date | null | undefined, now = Date.now()): number | undefined {
   if (value === null || value === undefined) {
     return undefined;

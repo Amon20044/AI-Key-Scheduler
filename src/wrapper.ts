@@ -1,3 +1,21 @@
+/*
+ * wrapper.ts
+ *
+ * High-level retry wrapper that coordinates leasing keys from `KeyScheduler`,
+ * executing user-provided work with the leased key, and handling retries,
+ * fallbacks, and rate-limit backoff. Key behaviors:
+ * - Builds candidate provider/model routes (ordered, round-robin, weighted,
+ *   or adaptive) when provider/model are omitted.
+ * - Repeatedly acquires keys and invokes `execute()` until success, exhaustion,
+ *   or timeout. Uses `KeyLease` methods (`success`, `release`, `rateLimited`) to
+ *   update scheduler state.
+ * - Classifies errors into retryable vs fallback (route) vs fatal.
+ *
+ * The wrapper uses small heuristics (regexes and provider runtime stats) to
+ * decide on retries and fallbacks; it is intentionally conservative and
+ * pluggable via `WithKeyRetryOptions` callbacks.
+ */
+
 import { isRateLimitError, KeyExhaustedError, NoAvailableKeyError, ProviderRouteError, RetryAbortedError } from "./errors.js";
 import { MaxScoreHeap } from "./heap.js";
 import type { KeyScheduler } from "./scheduler.js";

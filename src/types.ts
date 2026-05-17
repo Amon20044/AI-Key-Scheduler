@@ -1,3 +1,12 @@
+/*
+ * types.ts
+ *
+ * Shared TypeScript types and interfaces used throughout the project. Keep
+ * business logic and algorithms in their respective modules — this file is
+ * intentionally minimal and focused on the public shapes used by callers and
+ * adapters.
+ */
+
 import type { SecretString } from "./secret.js";
 
 export interface KeyConfig {

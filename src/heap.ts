@@ -1,3 +1,16 @@
+/*
+ * heap.ts
+ *
+ * Lightweight binary-heap implementations used by the scheduler:
+ * - `MinHeap` is used to schedule time-based cooldowns (earliest `resetAt` at the root).
+ *   Push/pop are O(log n) and `peek` is O(1).
+ * - `MaxScoreHeap` is a generic max-heap with O(log n) upsert/pop and an index map
+ *   for O(1) lookup by id. It's included for potential score-based selection but
+ *   is currently unused by the scheduler for per-key selection.
+ *
+ * Add comments near methods to make maintenance easier for new contributors.
+ */
+
 export interface HeapItem {
   keyId: string;
   resetAt: number;

@@ -1,3 +1,13 @@
+/*
+ * adapters/memory.ts
+ *
+ * In-memory adapters used for testing and simple runtime scenarios. These
+ * are not durable and are intended for local development or unit tests only.
+ * - `MemoryStateAdapter` implements `StateAdapter` for persisted scheduler
+ *   state.
+ * - `MemoryStorage` implements `KeyStorage` for loading/saving APIKey arrays.
+ */
+
 import type { APIKey, KeyStorage, PersistedSchedulerState, StateAdapter } from "../types.js";
 
 export class MemoryStateAdapter implements StateAdapter {

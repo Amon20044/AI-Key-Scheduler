@@ -1,3 +1,25 @@
+/*
+ * scheduler.ts
+ *
+ * Core KeyScheduler implementation. Responsibilities:
+ * - Maintain groups of API keys (`KeyGroup`) and runtime metadata (`RuntimeKey`).
+ * - Provide `acquire` to lease a key and a `KeyLease` object with settle methods
+ *   (`success`, `release`, `rateLimited`) that update runtime stats and persistence.
+ * - Track time-based cooldowns using a `MinHeap` of `{ keyId, resetAt }` for
+ *   efficient retrieval of the next key to become available.
+ * - Support multiple selection strategies (LRU, random, weighted, adaptive).
+ *
+ * Selection algorithms:
+ * - LRU: linear scan for least recently used key (O(n)).
+ * - Random: uniform pick from available keys (O(1) after building array).
+ * - Weighted: compute weight from `healthScore` or success rate and perform
+ *   a linear weighted random sample (O(n)).
+ * - Adaptive: compute a composite score (recency, success rate, latency), apply
+ *   an exponent to form weights (softmax-like), then sample via weightedPick (O(n)).
+ *
+ * Concurrency: mutations are serialized with `runExclusive` (Promise mutex).
+ */
+
 import { createHmac } from "node:crypto";
 import { MemoryStateAdapter } from "./adapters/memory.js";
 import { KeyIdentityMismatchError, NoAvailableKeyError, ProviderNotFoundError, SchedulerConfigurationError } from "./errors.js";

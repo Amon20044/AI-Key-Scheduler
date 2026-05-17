@@ -1,3 +1,10 @@
+/*
+ * adapters/file.ts
+ *
+ * File-backed `StateAdapter` for persisting scheduler state to disk. Writes are
+ * atomic (write to temp file then rename) to avoid corrupt state on crashes.
+ */
+
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";

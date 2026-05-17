@@ -1,3 +1,12 @@
+/*
+ * errors.ts
+ *
+ * Small, explicit error classes used across the package to signal common
+ * failure modes (configuration issues, missing providers, exhausted keys,
+ * rate limits, etc.). These structured errors are used by the wrapper to
+ * decide retry/fallback behavior.
+ */
+
 export class SchedulerConfigurationError extends Error {
   constructor(message: string) {
     super(message);

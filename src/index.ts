@@ -1,3 +1,11 @@
+/*
+ * index.ts
+ *
+ * Public exports for the package. Keep this file small — it's the single
+ * entrypoint used by consumers. Exported symbols are documented in their
+ * implementation files (see `scheduler.ts`, `wrapper.ts`, and `heap.ts`).
+ */
+
 export { FileStateAdapter } from "./adapters/file.js";
 export { MemoryStateAdapter, MemoryStorage } from "./adapters/memory.js";
 export {

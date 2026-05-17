@@ -1,3 +1,11 @@
+/*
+ * secret.ts
+ *
+ * Small utility for holding sensitive strings in a way that prevents accidental
+ * logging / inspection. `SecretString` exposes `value()` to access the raw
+ * secret and overrides `toString`/`toJSON`/inspect to return a redacted token.
+ */
+
 import { inspect } from "node:util";
 
 const REDACTED = "[REDACTED]";
